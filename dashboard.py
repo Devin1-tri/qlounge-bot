@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import time
+import shutil
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,10 +36,34 @@ from qlounge import (api, load_accounts, load_state, save_state, ensure_token,  
                      action_check_in, action_notices, action_posts, status)
 from anti_detection import Pacing, ANSWER_BANK, DailyBudget  # noqa: E402
 
+def term_width():
+    """Actual terminal width, no floor - a phone terminal really is ~40 cols."""
+    try:
+        return shutil.get_terminal_size((80, 24)).columns
+    except Exception:
+        return 80
+
+
 W = 76
 REFRESH_HOURS = 4          # light pass cadence
 MASK_EMAIL = False      # show ri***@gmail.com instead of the full address
 LOCAL_TZ_OFFSET = timedelta(hours=8)   # CST (UTC+8), the operator's clock
+
+# column plan for a wide terminal: name | poin | level | streak | today | posts | next
+WIDE_COLS = [("akun", 16), ("poin", 7), ("level", 9), ("streak", 7),
+             ("hari ini", 10), ("post", 5), ("next", 9)]
+# phone fallback: keep the account and what it owes, drop the rest
+NARROW_COLS = [("akun", 14), ("poin", 7), ("hari ini", 8), ("next", 9)]
+
+
+def plan_cols():
+    """Pick the column set that fits this terminal, and trim it if it still doesn't."""
+    w = term_width()
+    cols = WIDE_COLS if w >= 74 else NARROW_COLS
+    # a very narrow terminal drops columns from the right until the rule fits
+    while cols and (sum(c[1] for c in cols) + 3 * len(cols) + 1) > w:
+        cols = cols[:-1]
+    return cols or [("akun", min(12, max(6, w - 2)))]
 
 
 # ------------------------------------------------------------------ helpers --
@@ -79,6 +104,28 @@ def _cells(text):
     return n
 
 
+def _fit_line(text, limit):
+    """Truncate to `limit` chars, keeping ANSI codes intact."""
+    if _cells(text) <= limit:
+        return text
+    # walk chars, skip escape sequences when counting
+    out, used, i = [], 0, 0
+    while i < len(text):
+        if text[i] == "\033":
+            j = text.find("m", i)
+            if j == -1:
+                break
+            out.append(text[i:j + 1])
+            i = j + 1
+            continue
+        if used >= limit - 1:
+            break
+        out.append(text[i])
+        used += 1
+        i += 1
+    return "".join(out) + "\033[0m" if ui.C.enabled else "".join(out) + "…"
+
+
 def render(rows, st, next_at, action_msg=""):
     """Compact dashboard with column separators.
 
@@ -89,9 +136,9 @@ def render(rows, st, next_at, action_msg=""):
     os.system("clear" if os.environ.get("TERM") else "true")
     now = local_now()
 
-    # column layout: label | points | level | streak | today | posts | next
-    COLS = [("akun", 16), ("poin", 7), ("level", 9), ("streak", 7),
-            ("hari ini", 10), ("post", 5), ("next", 9)]
+    # columns adapt to the terminal: full set on a desktop, trimmed on a phone
+    COLS = plan_cols()
+    W = sum(w for _, w in COLS) + 3 * len(COLS) + 1
     SEP = c("│", ui.C.DIM)
 
     def row(cells, header=False):
@@ -114,37 +161,41 @@ def render(rows, st, next_at, action_msg=""):
             out.append(mid if i < len(COLS) - 1 else right)
         return "".join(out)
 
+    def panel_line(text, style):
+        """One full-width panel row: │ text padded/truncated to W-1 │."""
+        return (c("│", ui.C.C) + c(_fit_line(text, W - 1), *style)
+                + c("│", ui.C.C))
+
     lines = []
     lines.append(c(hrule("┌", "┬", "┐"), ui.C.C))
     title = f" Q LOUNGE BOT  ·  {now:%Y-%m-%d %H:%M:%S}"
-    lines.append(c("│", ui.C.C) + c(title, ui.C.BOLD, ui.C.M)
-                 + c(" " * max(0, W + 1 - _cells(title)) + "│", ui.C.C))
+    lines.append(panel_line(title, (ui.C.BOLD, ui.C.M)))
     lines.append(c(hrule("├", "┼", "┤"), ui.C.C))
     lines.append(c("│", ui.C.C) + row([n for n, _ in COLS], header=True)
                  + c("│", ui.C.C))
     lines.append(c(hrule("├", "┼", "┤"), ui.C.C))
 
     if not rows:
-        msg = " accounts.json kosong — salin accounts.example.json"
-        lines.append(c("│", ui.C.C) + c(msg, ui.C.Y)
-                     + c(" " * max(0, W + 1 - _cells(msg)) + "│", ui.C.C))
+        lines.append(panel_line(" accounts.json kosong — salin accounts.example.json",
+                                (ui.C.Y,)))
+
+    # every column name maps to the value it shows, so a trimmed column set
+    # (phone) still gets the right cell instead of a fixed 7-slot list
+    def account_cells(r, nxt_txt):
+        return {
+            "akun": r["label"][:16],
+            "poin": ui.fmt_pts(r["points"]),
+            "level": r.get("level", "?").replace("Lv.", "")[:9],
+            "streak": str(r.get("streak", 0)),
+            "hari ini": ui.fmt_pts(r.get("today", "0")),
+            "post": str(r.get("posts_unread", 0)),
+            "next": nxt_txt[:9],
+        }
 
     for r in rows:
-        if not r.get("ok"):
-            cells = [r["label"][:16], "-", "ERROR", "-", "-", "-", "-"]
-            lines.append(c("│", ui.C.C) + row(cells) + c("│", ui.C.C))
-            continue
-
-        earned, cap = r.get("today", "0"), r.get("cap", "0")
-        frac = 0.0
-        try:
-            frac = float(earned) / float(cap or 1)
-        except Exception:
-            pass
-
         lr = r.get("last_run")
         nxt_txt = "-"
-        if lr:
+        if lr and r.get("ok"):
             try:
                 dt = datetime.fromisoformat(lr)
                 if dt.tzinfo is None:
@@ -155,16 +206,16 @@ def render(rows, st, next_at, action_msg=""):
             except Exception:
                 pass
 
-        cells = [
-            r["label"][:16],
-            ui.fmt_pts(r["points"]),
-            r.get("level", "?").replace("Lv.", "")[:9],
-            str(r.get("streak", 0)),
-            ui.fmt_pts(r.get("today", "0")),
-            str(r.get("posts_unread", 0)),
-            nxt_txt[:9],
-        ]
-        lines.append(c("│", ui.C.C) + row(cells) + c("│", ui.C.C))
+        if not r.get("ok"):
+            vals = {k: "-" for k, _ in COLS}
+            vals["akun"] = r["label"][:16]
+            vals["level"] = "ERROR"
+        else:
+            vals = account_cells(r, nxt_txt)
+
+        lines.append(c("│", ui.C.C)
+                     + row([vals.get(name, "-") for name, _ in COLS])
+                     + c("│", ui.C.C))
 
     lines.append(c(hrule("├", "┴", "┤"), ui.C.C))
 
@@ -172,20 +223,14 @@ def render(rows, st, next_at, action_msg=""):
            if next_at else None)
     nxt_txt = f"{nxt:%H:%M:%S}" if nxt else "-"
     left = hms((next_at - datetime.now(timezone.utc)).total_seconds()) if next_at else "-"
-    foot = (f" refresh tiap {REFRESH_HOURS:g}j  ·  berikutnya "
-            f"{nxt_txt} ({left})")
-    lines.append(c("│", ui.C.C) + c(foot, ui.C.DIM)
-                 + c(" " * max(0, W + 1 - _cells(foot)) + "│", ui.C.C))
+    lines.append(panel_line(
+        f" refresh tiap {REFRESH_HOURS:g}j  ·  berikutnya "
+        f"{nxt_txt} ({left})", (ui.C.DIM,)))
     if action_msg:
-        a = f" {action_msg}"
-        lines.append(c("│", ui.C.C) + c(a, ui.C.C)
-                     + c(" " * max(0, W + 1 - _cells(a)) + "│", ui.C.C))
-    last = f" pass terakhir {st.get('last_pass', '-')}"
-    lines.append(c("│", ui.C.C) + c(last, ui.C.DIM)
-                 + c(" " * max(0, W + 1 - _cells(last)) + "│", ui.C.C))
-    hint = " Ctrl+C = stop"
-    lines.append(c("│", ui.C.C) + c(hint, ui.C.DIM)
-                 + c(" " * max(0, W + 1 - _cells(hint)) + "│", ui.C.C))
+        lines.append(panel_line(f" {action_msg}", (ui.C.C,)))
+    lines.append(panel_line(f" pass terakhir {st.get('last_pass', '-')}",
+                            (ui.C.DIM,)))
+    lines.append(panel_line(" Ctrl+C = stop", (ui.C.DIM,)))
     lines.append(c(hrule("└", "─", "┘"), ui.C.C))
 
     # detail block under the table: only the pending daily work, one line each
@@ -213,7 +258,10 @@ def render(rows, st, next_at, action_msg=""):
         detail.append(c(" " * 18, ui.C.DIM) + c(em, ui.C.DIM))
     if detail:
         lines.append("")
-        lines.extend(detail)
+        for ln in detail:
+            lines.append(_fit_line(ln, term_width()))
+    else:
+        lines.append("")
 
     return "\n".join(lines)
 
