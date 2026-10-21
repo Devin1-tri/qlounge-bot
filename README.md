@@ -116,6 +116,8 @@ dilakukan user biasa.
 
 ```
 qlounge.py            bot utama (run / status)
+dashboard.py          dashboard standby (kaya sirius/uorm)
+qlounge.sh            launcher screen: start/stop/status/once
 anti_detection.py     pacing, jawaban kuis, budget guard, jam aktif
 register.py           eksperimen pendaftaran otomatis + temuan kenapa gagal
 accounts.json         kredensial (gitignored)
@@ -129,10 +131,39 @@ state/<label>.json    progres per akun
 # sekali jalan
 python3 qlounge.py run
 
-# atau taruh di dalam screen biar tetap hidup
+# or put it in a screen so it stays alive
 screen -dmS qlounge bash -c 'cd ~/bot/qlounge && python3 qlounge.py run >> bot.log 2>&1'
 screen -r qlounge
 ```
+
+### Dashboard standby (recommended)
+
+`dashboard.py` is a standby daemon in the shape of the sirius/uorm bots: it draws a
+boxed panel, runs the daily pass for any account that has not run today, then sits
+idle showing the countdown to the next pass. It does **not** exit when the work is
+done — Ctrl+C stops it, `screen` keeps it alive.
+
+```bash
+./qlounge.sh start          # launch inside a screen session
+./qlounge.sh status
+./qlounge.sh once           # one pass then exit (for cron)
+./qlounge.sh stop
+screen -r qlounge           # attach and watch
+
+python3 dashboard.py --once                # one pass, no standby
+python3 dashboard.py --refresh-hours 2     # more frequent refresh pass
+```
+
+The panel shows, per account: email, membership UID, level, streak, points
+(balance / available / locked), a **daily checklist** of every earnable item with
+its state (`✔` done, `!` daily pending, `-` one-time pending), today's earnings
+against the daily cap as a bar, unread post count, and the **cooldown** to the
+next daily pass. The footer carries the last pass time, points changed, and the
+next pass countdown.
+
+Two passes matter: a **daily** pass (check-in + posts, once per day per account,
+enforced) and a light **refresh** pass every 4 h that only re-reads state so a
+newly published post is picked up without waiting a full day.
 
 ## Catatan teknis
 
