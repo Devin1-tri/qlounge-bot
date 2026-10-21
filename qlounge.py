@@ -217,7 +217,7 @@ def status(token):
 
 # --------------------------------------------------------- run per account --
 
-def run_account(account, do_posts=True):
+def run_account(account, do_posts=True, dash=None):
     label = account["label"]
     st = load_state(label)
     st["label"] = label
@@ -229,25 +229,64 @@ def run_account(account, do_posts=True):
     st = load_state(label)
 
     pacing = Pacing(account.get("pacing", {}))
+    results = {}
+
+    if dash:
+        dash.set(label, "run", "check-in…")
 
     ok, msg = action_check_in(token, st, pacing)
     log(f"  check-in : {'ok ' if ok else 'ERR'} {msg}")
+    results["check_in"] = (ok, msg)
 
     ok2, msg2 = action_notices(token, st, pacing)
     log(f"  notices  : {'ok ' if ok2 else 'ERR'} {msg2}")
+    results["notices"] = (ok2, msg2)
 
     ok3, msg3 = True, "dilewati"
     if do_posts:
         ok3, msg3 = action_posts(token, st, pacing, account.get("max_posts_per_run"))
         log(f"  posts    : {'ok ' if ok3 else 'ERR'} {msg3}")
+    results["posts"] = (ok3, msg3)
 
     code, me = api("/auth/me", token=token)
+    gained = 0.0
     if code == 200:
         log(f"  poin     : {me['point']['balance']} "
             f"(available {me['point']['available']})")
+        prev = st.get("last_balance")
+        if prev is None:
+            # first ever run: record the baseline, report no "gain" from a
+            # number we never captured
+            gained = 0.0
+        else:
+            try:
+                gained = float(me.get("point", {}).get("balance", 0)) - float(prev)
+            except Exception:
+                gained = 0.0
+        save_state(label, last_balance=me["point"]["balance"])
+
+    # pretty per-account card (skipped when a live dashboard owns the screen)
+    if not dash:
+        try:
+            code_t, today = api("/rewards/earned-today", token=token)
+            code_a, att = api("/attendance/today", token=token)
+            code_i, inv = api("/invites/sent/summary", token=token)
+            ui.account_card(
+                label, account["email"], me=me,
+                attendance=att if code_a == 200 else None,
+                today=today if code_t == 200 else None,
+                invites=inv if code_i == 200 else None,
+                results=results)
+        except Exception as ex:
+            log(f"  [ui] {ex}")
 
     save_state(label, last_run_at=datetime.now(timezone.utc).isoformat(),
                last_result={"check_in": ok, "notices": ok2, "posts": ok3})
+    if dash:
+        status = "ok" if (ok and ok2 and ok3) else "err"
+        detail = f"+{ui.fmt_pts(gained)} pts" if gained > 0 else (
+            results["posts"][1] if not ok else "selesai")
+        dash.complete(label, status, detail)
     return ok and ok2 and ok3
 
 
@@ -271,6 +310,14 @@ def main():
             return 1
 
     rc = 0
+    dash = None
+    if args.cmd == "run" and len(accounts) >= 1:
+        dash = ui.Dashboard(f"Q Lounge Daily · {len(accounts)} akun",
+                            [a["label"] for a in accounts])
+        dash.start()
+
+    gained_total = 0.0
+    skipped = []
     for i, acc in enumerate(accounts):
         if args.cmd == "status":
             token = ensure_token(acc)
@@ -285,26 +332,49 @@ def main():
                 DailyBudget(st).guard(force=args.no_guard)
             except RuntimeError as e:
                 log(f"--- {acc['label']}: {e}")
+                if dash:
+                    dash.set(acc["label"], "skip", "sudah jalan hari ini")
+                    dash.complete(acc["label"])
+                skipped.append(acc["label"])
                 continue
         if not in_active_hours(acc):
             log(f"--- {acc['label']}: di luar active_hours {acc.get('active_hours')} - skip")
+            if dash:
+                dash.set(acc["label"], "skip",
+                         f"di luar active_hours {acc.get('active_hours')}")
+                dash.complete(acc["label"])
+            skipped.append(acc["label"])
             continue
 
+        before = float(load_state(acc["label"]).get("last_balance", 0) or 0)
         try:
-            if not run_account(acc, do_posts=not args.no_posts):
+            if not run_account(acc, do_posts=not args.no_posts, dash=dash):
                 rc = 2
         except Exception as ex:
             log(f"  [!] {ex}")
+            if dash:
+                dash.set(acc["label"], "err", str(ex)[:48])
+                dash.complete(acc["label"])
             rc = 2
+        after = float(load_state(acc["label"]).get("last_balance", 0) or 0)
+        if after > before:
+            gained_total += after - before
         # humans do not clear every section the instant the previous one ends
         if i < len(accounts) - 1:
             gap = random.uniform(*acc.get("account_gap", (45, 120)))
             log(f"  jeda {gap:.0f}s sebelum akun berikutnya")
+            if dash:
+                dash.annotate(acc["label"], f" · jeda {gap:.0f}s")
             time.sleep(gap)
+
+    if dash:
+        dash.close([f"total +{ui.fmt_pts(gained_total)} pts"
+                    + (f" · {len(skipped)} dilewati" if skipped else "")])
     return rc
 
 
 if __name__ == "__main__":
     sys.path.insert(0, str(HERE))
+    import ui  # noqa: E402
     from anti_detection import Pacing, ANSWER_BANK, DailyBudget, in_active_hours  # noqa: E402
     sys.exit(main())
