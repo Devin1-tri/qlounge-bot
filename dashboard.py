@@ -59,50 +59,12 @@ def hms(seconds):
     return f"{sec}s"
 
 
-def fit(text, limit=None):
-    """Truncate to a display width (not a char count) so emoji rows pad right."""
-    limit = limit or (W - 4)
-    text = str(text)
-    if _cells(text) <= limit:
-        return text
-    out = []
-    used = 0
-    for ch in text:
-        w = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-        if used + w > limit - 1:
-            break
-        out.append(ch)
-        used += w
-    return "".join(out) + "…"
-
-
 def c(text, *styles):
     return ui.paint(text, *styles)
 
 
-def mask(email):
-    return ui.mask_email(email)
-
 
 # -------------------------------------------------------------------- render --
-
-def _box_line(inner):
-    """One panel row: │ <inner padded to W-2> │ (colour- and emoji-aware).
-
-    East-Asian wide chars and the variation-selector emoji used in this panel
-    occupy two terminal cells but count as one Python char; alignment has to
-    account for that or the right border drifts.
-    """
-    import re
-    # ALWAYS strip escapes before measuring: when colour is disabled paint()
-    # returns plain text, but any residual escape (e.g. a caller built the
-    # string while colour was still on) must not be counted as width, or the
-    # padding silently collapses to zero and the border detaches.
-    plain = re.sub(r"\033\[[0-9;]*m", "", inner)
-    cells = _cells(plain)
-    pad = " " * max(0, (W - 1) - cells)
-    return c("│ ", ui.C.C) + inner + pad + c("│", ui.C.C)
-
 
 def _cells(text):
     """Display width of text, treating wide/emoji codepoints as 2 cells."""
@@ -118,65 +80,87 @@ def _cells(text):
 
 
 def render(rows, st, next_at, action_msg=""):
+    """Compact dashboard.
+
+    One line per account carries everything that matters, plus a shared footer.
+    No per-account boxes - they were what made the old panel feel crowded.
+    """
     os.system("clear" if os.environ.get("TERM") else "true")
     now = local_now()
-    top = c("┌" + "─" * W + "┐", ui.C.C)
-    mid = c("├" + "─" * W + "┤", ui.C.C)
-    bot = c("└" + "─" * W + "┘", ui.C.C)
+    lines = []
 
-    head = f"  Q LOUNGE BOT · dashboard          {now:%Y-%m-%d %H:%M:%S}"
-    lines = [top, _box_line(c(head, ui.C.BOLD, ui.C.M)), mid]
+    # header: one rule, one title line, one rule
+    lines.append(c("─" * (W + 2), ui.C.DIM))
+    lines.append(c(f" Q LOUNGE BOT", ui.C.BOLD, ui.C.M)
+                 + c(f"  ·  {now:%Y-%m-%d %H:%M:%S}", ui.C.DIM))
+    lines.append(c("─" * (W + 2), ui.C.DIM))
 
     if not rows:
-        lines.append(_box_line(c("accounts.json kosong — salin accounts.example.json",
-                                 ui.C.Y)))
+        lines.append(c(" accounts.json kosong — salin accounts.example.json", ui.C.Y))
+        lines.append(c("─" * (W + 2), ui.C.DIM))
+        return "\n".join(lines)
 
     for r in rows:
         if not r.get("ok"):
-            lines.append(_box_line(c(fit(f"{r['label']}: ERROR {r.get('error', '?')}"),
-                                     ui.C.R)))
-            lines.append(mid)
+            lines.append(" " + c(f"{r['label']:<16}", ui.C.BOLD)
+                         + c("  ERROR ", ui.C.R)
+                         + c(str(r.get("error", "?")), ui.C.DIM))
             continue
 
-        title = (f"  {r['label']}  ·  {ui.fmt_pts(r['points'])} pts  ·  "
-                 f"{r['level']}  ·  streak {r.get('streak', 0)}")
-        lines.append(_box_line(c(fit(title), ui.C.BOLD, ui.C.W)))
+        # ---- line 1: label · points · level · streak ----
+        pts = ui.fmt_pts(r["points"])
+        lvl = r.get("level", "?")
+        streak = r.get("streak", 0)
+        lines.append(
+            " " + c(f"{r['label']:<16}", ui.C.BOLD, ui.C.W)
+            + c(f"{pts:>7}", ui.C.BOLD, ui.C.G) + " pts  "
+            + c(f"{lvl}", ui.C.C)
+            + c(f"  ·  streak {streak}", ui.C.Y if streak else ui.C.DIM))
 
-        sub = (f"     {r['email']}   {r.get('uid', '?')}   "
-               f"tersedia {ui.fmt_pts(r.get('avail', 0))} · "
-               f"terkunci {ui.fmt_pts(r.get('locked', 0))} · "
-               f"undangan {r.get('joined', 0)}")
-        lines.append(_box_line(c(fit(sub), ui.C.DIM)))
+        # ---- line 2: email · uid · available/locked · invites ----
+        email = r.get("email", "?")
+        uid = r.get("uid", "?")
+        avail = ui.fmt_pts(r.get("avail", 0))
+        locked = ui.fmt_pts(r.get("locked", 0))
+        joined = r.get("joined", 0)
+        lines.append(
+            " " + c(" " * 16)
+            + c(email, ui.C.DIM) + "  "
+            + c(uid, ui.C.DIM) + "  "
+            + c("tersedia ", ui.C.DIM) + c(avail, ui.C.W)
+            + c(" / terkunci ", ui.C.DIM) + c(locked, ui.C.W)
+            + c(f"  ·  undangan {joined}", ui.C.DIM))
 
+        # ---- line 3: daily checklist (compact, only pending shown) ----
         cl = r.get("checklist") or []
         if cl:
-            parts = []
+            marks = []
             for it in cl:
                 if it["done"]:
-                    mark = c("✔", ui.C.G)
-                elif it.get("daily"):
-                    mark = c("!", ui.C.Y)
+                    continue                      # done = nothing to say
+                pts_i = ui.fmt_pts(it["pts"] or 0)
+                if it.get("daily"):
+                    marks.append(c(f"{it['code'].replace('_', ' ')} {pts_i}", ui.C.Y))
                 else:
-                    mark = c("-", ui.C.DIM)
-                parts.append(f"{mark} {it['code'].replace('_', ' ')} "
-                             f"{ui.fmt_pts(it['pts'] or 0)}")
-            lines.append(_box_line(c(fit("     daily: " + "  ".join(parts[:3])),
-                                     ui.C.G if r.get("checked_in") else ui.C.Y)))
-            if len(parts) > 3:
-                lines.append(_box_line(c(fit("            " + "  ".join(parts[3:])),
-                                         ui.C.DIM)))
+                    marks.append(c(f"{it['code'].replace('_', ' ')} {pts_i}", ui.C.DIM))
+            if marks:
+                lines.append(" " + c(" " * 16)
+                             + c("belum: ", ui.C.DIM)
+                             + c("  ".join(marks[:3]), ui.C.W)
+                             + (c(f"  +{len(marks) - 3}", ui.C.DIM) if len(marks) > 3 else ""))
+            elif cl:
+                lines.append(" " + c(" " * 16)
+                             + c("semua tugas harian selesai", ui.C.G))
 
+        # ---- line 4: today vs cap bar · unread posts · cooldown ----
         earned, cap = r.get("today", "0"), r.get("cap", "0")
         frac = 0.0
         try:
             frac = float(earned) / float(cap or 1)
         except Exception:
             pass
-        lines.append(_box_line(
-            c(fit(f"     hari ini {ui.fmt_pts(earned)}/{ui.fmt_pts(cap)} pts"), ui.C.W)
-            + c(" " + ui.bar(frac, 20, ui.C.G) + " ", ui.C.DIM)))
-        lines.append(_box_line(c(fit(f"     post belum dibaca: "
-                                     f"{r.get('posts_unread', 0)}"), ui.C.C)))
+        unread = r.get("posts_unread", 0)
+        tail = c(f"post {unread}", ui.C.C if unread else ui.C.DIM)
 
         lr = r.get("last_run")
         if lr:
@@ -187,29 +171,31 @@ def render(rows, st, next_at, action_msg=""):
                 left = (dt + timedelta(days=1)
                         - datetime.now(timezone.utc)).total_seconds()
                 if left > 0:
-                    lines.append(_box_line(c(fit(f"     cooldown daily: {hms(left)}"),
-                                             ui.C.Y)))
+                    tail += c(f"  ·  next {hms(left)}", ui.C.Y)
                 else:
-                    lines.append(_box_line(c(fit("     daily siap dijalankan"),
-                                             ui.C.G)))
+                    tail += c("  ·  daily siap", ui.C.G)
             except Exception:
                 pass
-        lines.append(mid)
 
+        lines.append(" " + c(" " * 16)
+                     + c(f"hari ini {ui.fmt_pts(earned)}", ui.C.W)
+                     + c(" " + ui.bar(frac, 18, ui.C.G) + " ", ui.C.DIM)
+                     + tail)
+
+    lines.append(c("─" * (W + 2), ui.C.DIM))
+
+    # footer
     nxt = (next_at.astimezone(timezone.utc) + LOCAL_TZ_OFFSET
            if next_at else None)
     nxt_txt = f"{nxt:%H:%M:%S}" if nxt else "-"
     left = hms((next_at - datetime.now(timezone.utc)).total_seconds()) if next_at else "-"
-    lines.append(_box_line(c(fit(f"  daemon: pass harian 1x · refresh tiap "
-                                 f"{REFRESH_HOURS:g} jam"), ui.C.DIM)))
-    lines.append(_box_line(c(fit(f"  pass terakhir: {st.get('last_pass', '-')} · "
-                                 f"{st.get('last_result', '-')}"), ui.C.DIM)))
+    lines.append(" " + c(f"refresh tiap {REFRESH_HOURS:g}j", ui.C.DIM)
+                 + c(f"  ·  pass terakhir {st.get('last_pass', '-')}", ui.C.DIM)
+                 + c(f"  ·  berikutnya {nxt_txt} ({left})", ui.C.Y))
     if action_msg:
-        lines.append(_box_line(c(fit("  " + action_msg), ui.C.C)))
-    lines.append(_box_line(c(fit(f"  pass berikutnya: {nxt_txt} (dalam {left})"),
-                             ui.C.Y)))
-    lines.append(_box_line(c(fit("  Ctrl+C = stop bot (tetap di screen)"), ui.C.DIM)))
-    lines.append(bot)
+        lines.append(" " + c(action_msg, ui.C.C))
+    lines.append(" " + c("Ctrl+C = stop", ui.C.DIM))
+    lines.append(c("─" * (W + 2), ui.C.DIM))
     return "\n".join(lines)
 
 
