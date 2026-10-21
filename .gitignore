@@ -1,0 +1,20 @@
+accounts.json
+state/
+*.log
+__pycache__/
+.venv/
+
+# --- reversing artifacts (besar, tidak dipakai bot) ---
+base.apks
+splittmp/
+ext/
+dex/
+bundle_*.txt
+bundle_*.json
+aff_index.js
+probe1.py
+sweep2.py
+probe_daily.py
+delete_start.py
+delete_finish.py
+FINDINGS.json
