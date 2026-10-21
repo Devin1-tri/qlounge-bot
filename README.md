@@ -7,9 +7,11 @@ komunitas berbasis Expo/React Native dengan backend di
 Bot ini menjalankan semua aksi yang memberi poin, mendukung **multi akun**, dan
 dirancang supaya pola trafiknya tetap mirip pemakaian manusia normal.
 
-> ⚠️ **Kamu perlu akun sendiri.** Repo ini tidak menyertakan kredensial.
-> Semua endpoint dibalik dari APK publik; tidak ada exploit, tidak ada bypass
-> server-side — hanya otomasi hal yang memang bisa dilakukan user di aplikasi.
+> ⚠️ **Pendaftaran akun dilakukan manual, bukan oleh bot ini.** Lihat
+> [Cara kerja](#cara-kerja) — alasannya teknis, bukan pilihan gaya.
+> Repo ini juga tidak menyertakan kredensial. Semua endpoint dibalik dari APK
+> publik; tidak ada exploit, tidak ada bypass server-side — hanya otomasi hal
+> yang memang bisa dilakukan user di aplikasi.
 
 ## Yang dikerjakan
 
@@ -22,6 +24,34 @@ dirancang supaya pola trafiknya tetap mirip pemakaian manusia normal.
 
 Verifikasi nyata (2026-10-21): check-in `201` +20 pts, 8 post terbaca +40 pts,
 saldo 200 → 260.
+
+## Cara kerja
+
+```
+Akun dibuat manual di HP  →  invite ter-apply + wallet terbentuk
+        ↓
+   isi accounts.json      →  email + password + label
+        ↓
+  python3 qlounge.py run  →  check-in, baca post, baca notice
+```
+
+**Kenapa pendaftaran tidak diautomasi?** Q Lounge mengikat invite lewat **Play
+Install Referrer**: link share `https://affiliate.dj-maxrex.com/i/<code>`
+mengarah ke Play Store dengan `?referrer=invite%3D<code>`, dan aplikasi
+membacanya lewat `getInstallReferrerAsync()`. Sign-up lewat API
+(`/auth/sign-up/*`) tidak pernah melihat referrer itu, jadi akun hasil API:
+
+- tidak punya `inviter` di `/auth/me`
+- tidak dapat bonus `invite_accepted`
+- `hasWallet: false` — aplikasinya yang membuat wallet saat install
+
+Dibuktikan langsung: akun yang sama, dua cara daftar. Via HP → `hasWallet:true`
+dan `invite_accepted` +100 di `/points/transactions`. Via API → tidak ada
+keduanya. Kalau mau bonus invite, **install dari link share**; kalau mau bot
+yang jalan, akunnya harus didaftarkan manual dulu.
+
+`register.py` di repo ini adalah eksperimen yang mendokumentasikan temuan itu;
+bot utamanya `qlounge.py`.
 
 ## Pasang
 
@@ -58,7 +88,8 @@ Tambah entri di `accounts.json`:
 ```
 
 Bot menyusul berurutan, dengan jeda acak antarakun (`account_gap`) sebelum
-pindah ke akun berikutnya.
+pindah ke akun berikutnya. Progres tiap akun disimpan di `state/<label>.json`
+supaya run yang terputus bisa lanjut, bukan mengulang dari nol.
 
 ## Anti-deteksi
 
@@ -84,11 +115,23 @@ dilakukan user biasa.
 ## Struktur
 
 ```
-qlounge.py           bot utama (run / status)
-anti_detection.py    pacing, jawaban kuis, budget guard, jam aktif
-accounts.json        kredensial (gitignored)
-accounts.example.json  template
-state/<label>.json   progres per akun supaya aman kalau terputus
+qlounge.py            bot utama (run / status)
+anti_detection.py     pacing, jawaban kuis, budget guard, jam aktif
+register.py           eksperimen pendaftaran otomatis + temuan kenapa gagal
+accounts.json         kredensial (gitignored)
+accounts.example.json template
+state/<label>.json    progres per akun
+```
+
+## Menjalankan manual / di screen
+
+```bash
+# sekali jalan
+python3 qlounge.py run
+
+# atau taruh di dalam screen biar tetap hidup
+screen -dmS qlounge bash -c 'cd ~/bot/qlounge && python3 qlounge.py run >> bot.log 2>&1'
+screen -r qlounge
 ```
 
 ## Catatan teknis
