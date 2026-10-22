@@ -34,7 +34,7 @@ sys.path.insert(0, str(HERE))
 
 import ui  # noqa: E402
 from qlounge import (api, load_accounts, load_state, save_state, ensure_token,  # noqa: E402
-                     action_check_in, action_notices, action_posts, status)
+                     action_check_in, action_notices, action_posts, status, log)
 from anti_detection import Pacing, ANSWER_BANK, DailyBudget  # noqa: E402
 
 def term_width():
@@ -283,6 +283,13 @@ def render(rows, st, next_at, action_msg=""):
     detail = []
     for r in rows:
         if not r.get("ok"):
+            # an account that failed to log in still gets a row in the detail
+            # box, otherwise the panel looks half-rendered instead of "this one
+            # needs attention"
+            detail.append(c(f"  {r['label']:<12} ", ui.C.BOLD, ui.C.W)
+                          + c(f"{r.get('email', '?')}  ·  "
+                              f"{r.get('error') or 'tidak bisa dibaca'}  ·  "
+                              f"cek accounts.json / koneksi", ui.C.Y))
             continue
         detail.append(c(f"  {r['label']:<12} ", ui.C.BOLD, ui.C.W)
                       + c(f"{r.get('email', '?')}  ·  {r.get('uid', '?')}  ·  "
