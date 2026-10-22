@@ -278,11 +278,10 @@ def render(rows, st, next_at, action_msg=""):
               f"terkunci {ui.fmt_pts(r.get('locked', 0))}  ·  "
               f"undangan {r.get('joined', 0)}")
         detail.append(c(" " * 18, ui.C.DIM) + c(em, ui.C.DIM))
-        # XP progress toward the next level (the table column only fits x/y).
-        # xp is cumulative while nextLevelXp is the threshold for the next
-        # level, so xp > nextLevelXp happens and is NOT a bug - it means the
-        # level-up condition is something else (or not yet processed). Show the
-        # numbers as they are and let the bar clamp.
+        # XP progress. Keep both numbers even when xp > nextLevelXp: the API
+        # exposes nextLevelXp but no level-up mechanism exists yet (probed 9
+        # candidate endpoints, all 404), so the threshold is informational. If
+        # the feature ships later this line becomes accurate with no change.
         xp, need = r.get("xp"), r.get("next_xp")
         if xp is not None and need:
             nxt_name = r.get("next_level_name") or "?"
@@ -291,8 +290,12 @@ def render(rows, st, next_at, action_msg=""):
                 frac = float(xp) / float(need or 1)
             except Exception:
                 pass
-            state = (c("siap naik", ui.C.G) if frac >= 1.0
-                     else c(f"naik {nxt_name}", ui.C.M))
+            if frac >= 1.0:
+                # threshold reached but level unchanged - say so plainly rather
+                # than promising a level-up that never happens
+                state = c(f"target {nxt_name} tercapai", ui.C.Y)
+            else:
+                state = c(f"menuju {nxt_name}", ui.C.M)
             detail.append(c(" " * 18, ui.C.DIM)
                           + c("XP ", ui.C.DIM)
                           + c(f"{xp}/{need}", ui.C.W)

@@ -62,6 +62,13 @@ lokal), lalu refresh tampilan tiap 4 jam.
 Verifikasi nyata pada akun uji: check-in `201` +20 pts, 15/15 post terbaca
 +75 pts, saldo 230 → 325 dalam satu pass.
 
+> **Catatan soal level:** API mengekspos `level`, `xp`, `nextLevelXp`, dan
+> `nextLevelName`, tapi **belum ada mekanisme level-up** — sudah diprobe 9
+> kemungkinan endpoint, semuanya 404, dan di aplikasi juga tidak ada tombol.
+> Jadi wajar kalau XP sudah lewat `nextLevelXp` tapi level masih sama. Dashboard
+> menampilkan angka apa adanya (`189/99`) supaya otomatis benar kalau fiturnya
+> nanti nyala.
+
 ## Yang TIDAK bisa dikerjakan bot
 
 Ini **by design**, bukan kelalaian. Jangan buang waktu mencari tombolnya:
