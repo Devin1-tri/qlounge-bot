@@ -409,8 +409,8 @@ def daily_pass(accounts, rows_before):
     return results, deltas
 
 
-def due_for_daily(label):
-    """True when the once-per-day guard would let this account run."""
+def due_for_daily(label, now_utc=None):
+    """True when this account has not had its daily pass yet today (UTC day)."""
     ran = load_state(label).get("last_run_at")
     if not ran:
         return True
@@ -418,9 +418,19 @@ def due_for_daily(label):
         dt = datetime.fromisoformat(ran)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.date() < datetime.now(timezone.utc).date()
+        now_utc = now_utc or datetime.now(timezone.utc)
+        return dt.date() < now_utc.date()
     except Exception:
         return True
+
+
+def minutes_until_next_local_hour(hour, now_local=None):
+    """Minutes from now until the next occurrence of a local wall-clock hour."""
+    now_local = now_local or local_now()
+    target = now_local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if target <= now_local:
+        target += timedelta(days=1)
+    return int((target - now_local).total_seconds() // 60)
 
 
 def main():
@@ -442,46 +452,54 @@ def main():
 
     last_action = ""
     while True:
-        rows = [snapshot(a["label"], a, mask_email=MASK_EMAIL) for a in accounts]
-        st = {
-            "last_pass": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "last_result": "refresh",
-        }
+        now_utc = datetime.now(timezone.utc)
+        now_local = local_now()
 
-        # run the daily pass for any account that has not run today
-        due = [a for a in accounts if due_for_daily(a["label"])]
-        if due:
-            results, deltas = daily_pass(due, rows)
+        # ---- the daily pass: at the scheduled local hour, or immediately on a
+        # ---- fresh start when today's work has not been done yet
+        due = [a for a in accounts if due_for_daily(a["label"], now_utc)]
+        at_scheduled_hour = (now_local.hour == args.daily_at
+                             and now_local.minute < 30)
+        first_ever = not load_state(accounts[0]["label"]).get("last_run_at")
+        st = {"last_pass": now_utc.isoformat(timespec="seconds"),
+              "last_result": "refresh"}
+        if due and (at_scheduled_hour or first_ever):
+            results, deltas = daily_pass(due, rows=[])
             st["last_result"] = (", ".join(
                 f"{k}: {'ok' if v == 'ok' or isinstance(v, dict) else v}"
                 for k, v in results.items())) or "ok"
             if deltas:
-                st["deltas"] = deltas
                 last_action = "perubahan: " + "  ".join(
                     f"{k} {v}" for k, v in deltas.items())
-            rows = [snapshot(a["label"], a, mask_email=MASK_EMAIL) for a in accounts]
 
-        next_at = datetime.now(timezone.utc) + timedelta(hours=REFRESH_HOURS)
+        rows = [snapshot(a["label"], a, mask_email=MASK_EMAIL) for a in accounts]
+
+        # next thing to wait for: the scheduled daily hour, or the refresh tick
+        mins_to_daily = minutes_until_next_local_hour(args.daily_at, now_local)
+        next_at = now_utc + timedelta(
+            minutes=min(mins_to_daily, int(REFRESH_HOURS * 60)))
         print(render(rows, st, next_at, last_action))
 
         if args.once:
             return 0
-        try:
-            time.sleep(2)
-        except KeyboardInterrupt:
-            print("\n[stopped]", flush=True)
-            return 0
-        # idle loop: just keep the panel fresh with the countdown
+        # idle: keep the panel live, and fire the daily pass the moment the
+        # scheduled hour arrives (checked every 30s, so no missed window)
         while True:
             try:
                 time.sleep(30)
             except KeyboardInterrupt:
                 print("\n[stopped]", flush=True)
                 return 0
-            rows = [snapshot(a["label"], a, mask_email=MASK_EMAIL) for a in accounts]
-            nxt = datetime.now(timezone.utc) + timedelta(
-                hours=max(0.0, (next_at - datetime.now(timezone.utc)).total_seconds() / 3600.0))
-            print(render(rows, st, nxt, last_action))
+            now_local = local_now()
+            if (now_local.hour == args.daily_at and now_local.minute < 30):
+                due = [a for a in accounts
+                       if due_for_daily(a["label"], datetime.now(timezone.utc))]
+                if due:
+                    results, deltas = daily_pass(due, rows=[])
+                    if deltas:
+                        last_action = "perubahan: " + "  ".join(
+                            f"{k} {v}" for k, v in deltas.items())
+                    break                      # redraw with fresh numbers
             if datetime.now(timezone.utc) >= next_at:
                 break
 
