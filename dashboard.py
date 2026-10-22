@@ -315,22 +315,21 @@ def render(rows, st, next_at, action_msg=""):
         lines.append("")
 
     # footer info goes LAST, under the per-account detail: the eye reads
-    # accounts first, the "when does it run again" line is reference material
+    # accounts first, the "when does it run again" line is reference material.
+    # No box around it - the table above already owns the framed area.
     nxt = (next_at.astimezone(timezone.utc) + LOCAL_TZ_OFFSET
            if next_at else None)
     nxt_txt = f"{nxt:%H:%M:%S}" if nxt else "-"
     left = hms((next_at - datetime.now(timezone.utc)).total_seconds()) if next_at else "-"
     lines.append("")
-    lines.append(c(hrule("┌", "─", "┐"), ui.C.C))
-    lines.append(panel_line(
-        f" refresh tiap {REFRESH_HOURS:g}j  ·  berikutnya "
-        f"{nxt_txt} ({left})", (ui.C.DIM,)))
+    lines.append(_fit_line(
+        c(f" refresh tiap {REFRESH_HOURS:g}j  ·  berikutnya {nxt_txt} ({left})",
+          ui.C.DIM), term_width()))
     if action_msg:
-        lines.append(panel_line(f" {action_msg}", (ui.C.C,)))
-    lines.append(panel_line(f" pass terakhir {st.get('last_pass', '-')}",
-                            (ui.C.DIM,)))
-    lines.append(panel_line(" Ctrl+C = stop", (ui.C.DIM,)))
-    lines.append(c(hrule("└", "─", "┘"), ui.C.C))
+        lines.append(_fit_line(c(f" {action_msg}", ui.C.C), term_width()))
+    lines.append(_fit_line(
+        c(f" pass terakhir {st.get('last_pass', '-')}", ui.C.DIM), term_width()))
+    lines.append(_fit_line(c(" Ctrl+C = stop", ui.C.DIM), term_width()))
 
     return "\n".join(lines)
 
