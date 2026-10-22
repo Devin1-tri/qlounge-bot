@@ -308,9 +308,12 @@ def render(rows, st, next_at, action_msg=""):
                           + c(" " + ui.bar(frac, 14, ui.C.M) + " ", ui.C.DIM)
                           + state)
     if detail:
-        lines.append("")
+        # detail block gets its own box, same width as the table above, so the
+        # whole panel reads as one framed dashboard instead of loose lines
+        lines.append(c(hrule("┌", "─", "┐"), ui.C.C))
         for ln in detail:
-            lines.append(_fit_line(ln, term_width()))
+            lines.append(panel_line(ln, ()))
+        lines.append(c(hrule("└", "─", "┘"), ui.C.C))
     else:
         lines.append("")
 
