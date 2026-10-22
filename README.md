@@ -7,6 +7,8 @@ komunitas berbasis Expo/React Native dengan backend di
 Bot ini mengerjakan check-in harian, membaca post dan pengumuman, mendukung
 **multi akun**, dan mengatur polanya supaya mirip pemakaian manusia normal.
 
+**Cuma butuh satu perintah: `python3 dashboard.py`.**
+
 > ## ⚠️ BACA DULU: PENDAFTARAN AKUN HARUS MANUAL
 >
 > **Bot ini tidak bisa mendaftarkan akun baru.** Lo harus daftar sendiri di
@@ -38,7 +40,6 @@ Bot ini mengerjakan check-in harian, membaca post dan pengumuman, mendukung
 - [Pasang](#pasang)
 - [Cara pakai](#cara-pakai)
 - [Multi akun](#multi-akun)
-- [Mode standby (dashboard)](#mode-standby-dashboard)
 - [Anti-deteksi](#anti-deteksi)
 - [Struktur file](#struktur-file)
 - [Catatan teknis](#catatan-teknis)
@@ -54,7 +55,6 @@ Bot ini mengerjakan check-in harian, membaca post dan pengumuman, mendukung
 | Check-in harian (ikut kuis) | `POST /attendance/check-in` | 20 pts + 2 XP |
 | Baca post komunitas | `POST /community/posts/<id>/read` | 5 pts + 10 XP per post |
 | Baca pengumuman | `POST /notices/<id>/read` | — |
-| Naik level | otomatis dari XP | — |
 
 Bot mengerjakan ini **sekali per hari per akun** (default jam 09:00 waktu
 lokal), lalu refresh tampilan tiap 4 jam.
@@ -75,7 +75,7 @@ Ini **by design**, bukan kelalaian. Jangan buang waktu mencari tombolnya:
 
 | Item | Kenapa |
 |---|---|
-| `verify_email` (20 pts) | Tidak ada endpoint claim. Reward-nya otomatis server-side, atau memang tidak akan masuk. |
+| `verify_email` (20 pts) | Tidak ada endpoint claim. Sudah diprobe 10 kandidat path claim, semua 404; di bundle aplikasi cuma ada `/auth/email/claim/start|verify` yang itu alur verifikasi email, bukan claim reward. Reward-nya keputusannya server-side. |
 | `check_in_bonus` (100 pts) | Butuh streak check-in 7 hari berturut-turut. |
 | `streak_15` (150 pts) | Butuh streak 15 hari. |
 | `invite_sent` (100 pts/orang) | Butuh orang daftar lewat link invite lo. |
@@ -85,8 +85,7 @@ Ini **by design**, bukan kelalaian. Jangan buang waktu mencari tombolnya:
 
 ## Pasang
 
-Butuh: **Python 3** (3.8+) dan **git**. Tidak ada dependency eksternal —
-semua pakai standard library.
+Butuh: **Python 3** (3.8+, tanpa dependency eksternal) dan **git**.
 
 ```bash
 git clone https://github.com/Devin1-tri/qlounge-bot.git
@@ -115,53 +114,40 @@ Lalu edit `accounts.json`, isi email + password akun Q Lounge lo:
 }
 ```
 
-> `accounts.json` sudah masuk `.gitignore` — kredensial lo nggak akan
-> ter-commit. Jangan pernah hapus baris itu.
+`label` harus unik — dipakai sebagai nama file di `state/`.
+
+> `accounts.json` dan `state/` sudah masuk `.gitignore`, jadi kredensial dan
+> token lo nggak akan ter-commit. Jangan hapus baris itu.
 
 ---
 
 ## Cara pakai
 
-### Sekali jalan
+### Standby (mode normal — cukup ini)
 
 ```bash
-./qlounge.sh run          # semua akun, sekali jalan, lalu keluar
+python3 dashboard.py
 ```
 
-Atau langsung:
+Itu aja. Bot akan:
 
-```bash
-python3 qlounge.py run                 # semua akun
-python3 qlounge.py run --account akun1 # satu akun
-python3 qlounge.py status              # lihat saldo & status saja
-```
-
-### Opsi berguna
-
-```bash
-python3 qlounge.py run --no-posts    # check-in saja, jangan baca post
-python3 qlounge.py run --no-guard    # paksa jalan walau sudah jalan hari ini
-```
-
-### Mode standby (dashboard) — rekomendasi
-
-Ini mode yang dipakai kalau lo mau ditinggal jalan terus (di `screen`):
-
-```bash
-screen -S qlounge          # bikin screen sendiri
-./qlounge.sh               # default = dashboard standby
-# Ctrl+A lalu D untuk detach
-```
-
-Dashboard akan:
-1. Gambar panel status
+1. Gambar panel status tiap akun
 2. Diam, refresh tampilan tiap 4 jam
 3. Pas jam 09:00 lokal → **jalanin pass sendiri** (check-in + semua post baru)
 4. Update panel, lalu diam lagi sampai besok
 
 Tidak ada input manual. Berhenti dengan `Ctrl+C`.
 
-Opsi dashboard:
+Kalau mau ditinggal di VPS / SSH, jalankan di dalam `screen` biar nggak mati
+saat koneksi putus:
+
+```bash
+screen -S qlounge
+python3 dashboard.py
+# Ctrl+A lalu D untuk detach, `screen -r qlounge` untuk balik
+```
+
+### Opsi dashboard
 
 ```bash
 python3 dashboard.py --once              # satu pass lalu keluar (buat tes/cron)
@@ -169,26 +155,57 @@ python3 dashboard.py --daily-at 20       # ganti jam pass harian (default 9)
 python3 dashboard.py --refresh-hours 2   # refresh lebih sering
 ```
 
-Contoh tampilan:
+### Mode lain (kalau perlu)
+
+Biasanya nggak perlu, tapi kalau mau satu kali jalan tanpa panel:
+
+```bash
+python3 qlounge.py run                  # sekali jalan semua akun, lalu keluar
+python3 qlounge.py run --account akun1  # satu akun saja
+python3 qlounge.py run --no-posts       # check-in saja, jangan baca post
+python3 qlounge.py run --no-guard       # paksa walau sudah jalan hari ini
+python3 qlounge.py status               # lihat saldo & status mentah
+```
+
+### Contoh tampilan
 
 ```
-┌────────────────┬──────────────────┬─────────┬───────────────┬─────────┐
-│ Q LOUNGE BOT  ·  2026-10-22 13:59:31                                        │
-├────────────────┼──────────────────┼─────────┼───────────────┼─────────┤
-│ akun           │ username         │ poin    │ level         │ streak  │
-├────────────────┼──────────────────┼─────────┼───────────────┼─────────┤
-│ akun1          │ NamLo            │ 545     │ 1 STARTER 189 │ 2       │
-│ akun2          │ AkunDua          │ 325     │ 1 STARTER 157 │ 1       │
-├────────────────┴──────────────────┴─────────┴───────────────┴─────────┤
-│ refresh tiap 4j  ·  berikutnya 17:59:31 (3h 59m)                          │
-│ pass terakhir 2026-10-22T05:59:31+00:00                                    │
-│ Ctrl+C = stop                                                              │
-└──────────────────────────────────────────────────────────────────────────┘
+┌──────────────┬─────────────────┬────────┬──────────────┬────────┬──────────┬──────────┬────────┬─────────┬──────────┐
+│ akun         │ username        │ poin   │ level        │ streak │ hari ini │ checkin  │ post   │ email   │ next     │
+├──────────────┼─────────────────┼────────┼──────────────┼────────┼──────────┼──────────┼────────┼─────────┼──────────┤
+│ akun1        │ NamLo           │ 545    │ 1 STARTER 18 │ 2      │ 60       │ [+]      │ [+]    │ [-]     │ 20h 26m  │
+│ akun2        │ AkunDua         │ 325    │ 1 STARTER 15 │ 1      │ 225      │ [+]      │ [+]    │ [-]     │ 21h 14m  │
+└──────────────┴─────────────────┴────────┴──────────────┴────────┴──────────┴──────────┴────────┴─────────┴──────────┘
 
-  akun1          belum: check in bonus 100  daily post read 5
-                  akun1@gmail.com  ·  MQX000000000001  ·  tersedia 145 / terkunci 400  ·  undangan 2
-                  XP 189/99 ██████████████ siap naik
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  akun1        akun1@gmail.com    MQX000000000001    tersedia 145 / terkunci 400    undangan 2                          │
+│               XP 189/99  target LEARNER tercapai                                                                     │
+│  akun2        akun2@gmail.com    MQX000000000002    tersedia 125 / terkunci 200    undangan 0                          │
+│               XP 157/99  target LEARNER tercapai                                                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+ refresh tiap 4j  ·  berikutnya 19:02:52 (3h 59m)
+ pass terakhir 2026-10-22T07:02:52+00:00
+ Ctrl+C = stop
 ```
+
+### Arti tiga kolom ceklis
+
+Isinya **hasil pass harian bot**, bukan tebakan:
+
+| Kolom | `[+]` artinya |
+|---|---|
+| `checkin` | check-in hari ini tercatat di server (`attendance.checkedIn = true`), bonus harian sudah masuk |
+| `post` | nol post baru yang belum dibaca |
+| `email` | email verified **dan** reward `verify_email` sudah `completed` |
+
+`[-]` = belum selesai. Bot re-read server setelah pass dan menyimpan hasilnya
+ke `state/<label>.json` (`task_checks`); kalau aksinya error, tick dipaksa
+`[-]` — jadi `[+]` nggak pernah muncul tanpa konfirmasi server.
+
+Catatan: `[-]` di kolom `email` **bukan** berarti tugasnya belum dikerjakan.
+Kedua akun uji email-nya sudah verified, tapi reward 20 poinnya belum ada
+endpoint claim-nya (lihat [tabel di atas](#yang-tidak-bisa-dikerjakan-bot)).
 
 Panel otomatis menyesuaikan lebar terminal — di HP (~40 kolom) kolom yang
 tidak muat dibuang supaya tidak rusak.
@@ -263,15 +280,14 @@ bisa dilakukan user biasa di aplikasi.
 ## Struktur file
 
 ```
-qlounge.py            bot sekali-jalan (run / status)
-dashboard.py          dashboard standby (mode rekomendasi)
-qlounge.sh            dispatcher tipis: run | status | once | (default) dashboard
+dashboard.py          dashboard standby — SATU-SATUNYA yang perlu dijalankan
+qlounge.py            mesin aksi (run / status), dipakai dashboard
 ui.py                 warna, ikon, progress bar, kolom adaptif
 anti_detection.py     pacing, jawaban kuis, budget guard
 register.py           eksperimen pendaftaran otomatis + kenapa gagal
 accounts.json         kredensial lo (gitignored — JANGAN commit)
 accounts.example.json template
-state/<label>.json    progres per akun (token, saldo terakhir, post terbaca)
+state/<label>.json    progres per akun (token, saldo, post terbaca, task_checks)
 demo_ui.py            render semua elemen UI buat cek layout
 test_widths.py        cek tampilan di lebar terminal 40/60/80/120
 ```
@@ -286,6 +302,8 @@ test_widths.py        cek tampilan di lebar terminal 40/60/80/120
   check-in — itu perilaku server, bukan bug.
 - Post hanya bisa dibaca **sekali seumur hidup** (5 poin per post), bukan per
   hari. Kalau semua post sudah dibaca, berikutnya nunggu post baru dipublish.
+- `state/` gitignored: di mesin lain bot login ulang sendiri dan mengisi
+  `task_checks` di pass pertama. Nggak perlu copy state.
 - Endpoint penghapusan akun (kalau perlu):
   `POST /auth/me/deletion/email/start` → `/verify` → `DELETE /auth/me {ticket}`
 
@@ -297,10 +315,10 @@ test_widths.py        cek tampilan di lebar terminal 40/60/80/120
 |---|---|---|
 | `accounts.json kosong` | file belum dibuat | `cp accounts.example.json accounts.json` |
 | Login gagal / `login gagal` | email/password salah | cek `accounts.json` |
-| Akun dilewati, "sudah dijalankan hari ini" | guard 1×/hari | `--no-guard` kalau mau paksa |
+| Akun dilewati, "sudah dijalankan hari ini" | guard 1×/hari | `python3 qlounge.py run --no-guard` kalau mau paksa |
 | Panel tidak muncul warna | output bukan terminal | jalan langsung di terminal / screen |
-| Tabel rusak di HP | terminal sempit | sudah otomatis adaptif; kalau masih rusak, perlebar terminal |
-| Bot mati sendiri | proses child dari session lain | pakai `screen` biar lepas dari session |
+| Tabel rusak di sempit | terminal < lebar kolom | sudah otomatis adaptif; kalau masih rusak, perlebar terminal |
+| Bot mati saat SSH putus | proses ikut session | jalankan di dalam `screen` |
 | `ModuleNotFoundError` | Python terlalu lama | butuh Python 3.8+ |
 
 ---
