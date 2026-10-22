@@ -239,7 +239,10 @@ def render(rows, st, next_at, action_msg=""):
         if not r.get("ok"):
             continue
         cl = r.get("checklist") or []
-        pend = [i for i in cl if not i.get("done")]
+        # "verified" means the chore is satisfied but its reward is unclaimed -
+        # it is not a to-do, and it must not be listed as one.
+        pend = [i for i in cl if i.get("state", "pending") == "pending"]
+        verified = [i for i in cl if i.get("state") == "verified"]
         label = f"{r['label']:<16}"
         if pend:
             names = "  ".join(f"{i['code'].replace('_', ' ')} "
@@ -251,6 +254,12 @@ def render(rows, st, next_at, action_msg=""):
         else:
             detail.append(c(f"  {label}", ui.C.BOLD, ui.C.W)
                           + c("semua tugas harian selesai", ui.C.G))
+        if verified:
+            names = "  ".join(f"{i['code'].replace('_', ' ')} "
+                              f"{ui.fmt_pts(i['pts'] or 0)}" for i in verified)
+            detail.append(c(" " * 18, ui.C.DIM)
+                          + c("sudah beres, reward belum diklaim: ", ui.C.DIM)
+                          + c(names, ui.C.M))
         em = (f"{r.get('email', '?')}  ·  {r.get('uid', '?')}  ·  "
               f"tersedia {ui.fmt_pts(r.get('avail', 0))} / "
               f"terkunci {ui.fmt_pts(r.get('locked', 0))}  ·  "
@@ -308,13 +317,29 @@ def snapshot(label, account, mask_email=False):
                    if not i.get("completed") and i.get("section") in ("daily", "one_time")]
         row["earn_done"] = len(done)
         row["earn_total"] = len(items)
-        # the checklist the panel draws: daily + one-time items with their state
+
+        # Cross-check against /auth/me: an item can be genuinely satisfied on the
+        # account while its reward entry stays unclaimed. emailVerified=true with
+        # verify_email completed=false means "email already verified, reward not
+        # yet claimed" - showing that as a pending chore would be wrong.
+        verified = bool(me.get("emailVerified"))
+        claimed = {i["code"] for i in items if i.get("completed")}
+
+        def state_of(code_name):
+            if code_name == "verify_email" and verified:
+                return "verified"
+            if code_name in claimed:
+                return "done"
+            return "pending"
+
+        row["email_verified"] = verified
         row["checklist"] = [{
             "code": i["code"],
             "pts": i.get("pointAmount"),
             "xp": i.get("xpAmount"),
             "done": bool(i.get("completed")),
             "daily": i.get("section") == "daily",
+            "state": state_of(i["code"]),
         } for i in items if i.get("section") in ("daily", "one_time")]
 
     code, posts = api("/community/posts", token=token)
