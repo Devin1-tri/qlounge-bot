@@ -15,7 +15,7 @@ import ui  # noqa: E402
 import dashboard as d  # noqa: E402
 
 ROWS = [
-    {"label": "rian3124", "email": "rian3124@gmail.com", "uid": "MQX193127275218",
+    {"label": "akun1", "email": "akun1@gmail.com", "uid": "MQX000000000001",
      "level": "Lv.1 STARTER", "points": "285", "avail": "85", "locked": "200",
      "joined": 0, "streak": 1, "checked_in": True, "ok": True,
      "checklist": [{"code": "daily_check_in", "pts": "20", "done": True},

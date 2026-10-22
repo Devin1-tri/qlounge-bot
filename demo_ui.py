@@ -13,13 +13,13 @@ def main():
     print()
     ui.banner_run(3)
 
-    d = ui.Dashboard("Menjalankan akun", ["rian3124", "akun2", "akun3"])
+    d = ui.Dashboard("Menjalankan akun", ["akun1", "akun2", "akun3"])
     d.start()
-    d.set("rian3124", "run", "check-in…")
+    d.set("akun1", "run", "check-in…")
     import time
     time.sleep(0.4)
-    d.set("rian3124", "ok", "+25 pts · 4 post")
-    d.complete("rian3124")
+    d.set("akun1", "ok", "+25 pts · 4 post")
+    d.complete("akun1")
     time.sleep(0.3)
     d.set("akun2", "err", "login gagal 401")
     d.complete("akun2")
@@ -28,8 +28,8 @@ def main():
     d.complete("akun3")
     d.close(["selesai 1 akun, 1 gagal, 1 dilewati"])
     ui.account_card(
-        "rian3124", "rian3124@gmail.com",
-        me={"membership": {"uid": "MQX193127275218", "level": 1,
+        "akun1", "akun1@gmail.com",
+        me={"membership": {"uid": "MQX000000000001", "level": 1,
                            "levelName": "STARTER", "xp": 12, "nextLevelXp": 99,
                            "pointMultiplier": "1.0000"},
             "point": {"balance": "260.00000", "available": "60.00000",

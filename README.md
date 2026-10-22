@@ -68,7 +68,7 @@ Tidak perlu dependency eksternal — Python 3 standar saja.
 
 ```bash
 python3 qlounge.py run                       # semua akun
-python3 qlounge.py run --account rian3124    # satu akun
+python3 qlounge.py run --account akun1    # satu akun
 python3 qlounge.py status                    # lihat saldo & status
 python3 qlounge.py run --no-posts            # cek-in saja, jangan baca post
 python3 qlounge.py run --no-guard            # paksa jalan walau sudah jalan hari ini

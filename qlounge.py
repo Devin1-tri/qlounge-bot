@@ -11,7 +11,7 @@ traffic inside a normal human session (see anti_detection.py).
 
 Usage:
     qlounge.py run                       # all accounts from accounts.json
-    qlounge.py run --account rian3124    # one account
+    qlounge.py run --account akun1    # one account
     qlounge.py status                    # read-only summary
 
 State is per account in state/<label>.json so a crash resumes instead of
