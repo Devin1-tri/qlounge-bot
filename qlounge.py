@@ -97,7 +97,7 @@ def load_accounts():
 
     Layout:
       {"accounts": [{"label","email","password"}, ...],
-       "defaults": {"max_posts_per_run":4, "account_gap":[45,150], ...}}
+       "defaults": {"max_posts_per_run":null, "account_gap":[45,150], ...}}
 
     Any key set on an account overrides the same key in defaults. This keeps
     adding an account to a 3-line edit instead of a 30-line one.

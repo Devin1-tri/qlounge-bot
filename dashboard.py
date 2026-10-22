@@ -477,14 +477,16 @@ def main():
             now_local = local_now()
 
             # ---- the daily pass: at the scheduled local hour, or immediately on a
-            # ---- fresh start when today's work has not been done yet
+            # ---- fresh start when today's work has not been done yet.
+            # ---- With --once the pass always runs for whatever is due, so a
+            # ---- one-shot invocation is not just a status render.
             due = [a for a in accounts if due_for_daily(a["label"], now_utc)]
             at_scheduled_hour = (now_local.hour == args.daily_at
                                  and now_local.minute < 30)
             first_ever = not load_state(accounts[0]["label"]).get("last_run_at")
             st = {"last_pass": now_utc.isoformat(timespec="seconds"),
                   "last_result": "refresh"}
-            if due and (at_scheduled_hour or first_ever):
+            if due and (at_scheduled_hour or first_ever or args.once):
                 # Do not start on the hour boundary itself: a check-in timestamped
                 # exactly 09:00:00 across several accounts is the loudest pattern
                 # available. Shift the whole pass by a few minutes first.

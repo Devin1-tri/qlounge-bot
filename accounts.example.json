@@ -12,11 +12,23 @@
     }
   ],
   "defaults": {
-    "max_posts_per_run": 4,
-    "account_gap": [45, 150],
-    "check_in": [1.2, 4.5],
-    "post_read": [3, 14],
-    "notice_read": [0.6, 2]
+    "max_posts_per_run": null,
+    "account_gap": [
+      45,
+      150
+    ],
+    "check_in": [
+      1.2,
+      4.5
+    ],
+    "post_read": [
+      3,
+      14
+    ],
+    "notice_read": [
+      0.6,
+      2
+    ]
   },
   "_comments": {
     "label": "nama pendek untuk state/<label>.json - harus unik",
@@ -24,7 +36,7 @@
     "password": "password akun",
     "defaults": "dipakai kalau akun nggak punya setelan sendiri",
     "account_gap": "jeda (detik, min-max) sebelum akun ini mulai - biar nggak barengan",
-    "max_posts_per_run": "berapa post dibaca per run; 0 = skip",
+    "max_posts_per_run": "berapa post dibaca per run; null = SEMUA yang belum dibaca, 0 = skip",
     "check_in/post_read/notice_read": "jeda acak antar aksi (detik)",
     "_opsional": "Kalau mau akun tertentu beda, tambahkan field yang sama di dalam objek akun itu - nilainya menimpa defaults"
   }
