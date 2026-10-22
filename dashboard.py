@@ -134,7 +134,12 @@ def render(rows, st, next_at, action_msg=""):
     a vertical rule, so every account lines up and the eye can scan down a
     column instead of re-reading the whole line.
     """
-    os.system("clear" if os.environ.get("TERM") else "true")
+    # Only clear on an interactive terminal. When stdout is a pipe or a file
+    # (screen capture, log redirect, cron), os.system("clear") still emits the
+    # escape but the panel then scrolls away - and on some setups it swallows
+    # the whole first frame, which looks like "the bot printed nothing".
+    if os.environ.get("TERM") and sys.stdout.isatty():
+        os.system("clear")
     now = local_now()
 
     # columns adapt to the terminal: full set on a desktop, trimmed on a phone
@@ -467,71 +472,80 @@ def main():
 
     last_action = ""
     while True:
-        now_utc = datetime.now(timezone.utc)
-        now_local = local_now()
-
-        # ---- the daily pass: at the scheduled local hour, or immediately on a
-        # ---- fresh start when today's work has not been done yet
-        due = [a for a in accounts if due_for_daily(a["label"], now_utc)]
-        at_scheduled_hour = (now_local.hour == args.daily_at
-                             and now_local.minute < 30)
-        first_ever = not load_state(accounts[0]["label"]).get("last_run_at")
-        st = {"last_pass": now_utc.isoformat(timespec="seconds"),
-              "last_result": "refresh"}
-        if due and (at_scheduled_hour or first_ever):
-            # Do not start on the hour boundary itself: a check-in timestamped
-            # exactly 09:00:00 across several accounts is the loudest pattern
-            # available. Shift the whole pass by a few minutes first.
-            shift = random.uniform(0, 240) if not first_ever else 0
-            if shift > 1:
-                log(f"menunggu {shift:.0f}s sebelum mulai pass harian")
-                time.sleep(shift)
-            results, deltas = daily_pass(due)
-            st["last_result"] = (", ".join(
-                f"{k}: {'ok' if v == 'ok' or isinstance(v, dict) else v}"
-                for k, v in results.items())) or "ok"
-            if deltas:
-                last_action = "perubahan: " + "  ".join(
-                    f"{k} {v}" for k, v in deltas.items())
-
-        rows = [snapshot(a["label"], a, mask_email=MASK_EMAIL) for a in accounts]
-
-        # next thing to wait for: the scheduled daily hour, or the refresh tick
-        mins_to_daily = minutes_until_next_local_hour(args.daily_at, now_local)
-        next_at = now_utc + timedelta(
-            minutes=min(mins_to_daily, int(REFRESH_HOURS * 60)))
-        print(render(rows, st, next_at, last_action))
-
-        if args.once:
-            return 0
-        # idle: keep the panel live, and fire the daily pass the moment the
-        # scheduled hour arrives (checked every 30s, so no missed window)
-        while True:
-            try:
-                time.sleep(30)
-            except KeyboardInterrupt:
-                print("\n[stopped]", flush=True)
-                return 0
+        try:
+            now_utc = datetime.now(timezone.utc)
             now_local = local_now()
-            if (now_local.hour == args.daily_at and now_local.minute < 30):
-                due = [a for a in accounts
-                       if due_for_daily(a["label"], datetime.now(timezone.utc))]
-                if due:
-                    # same reasoning as the first iteration: never fire on the
-                    # boundary, and stagger accounts apart
-                    shift = random.uniform(0, 240)
+
+            # ---- the daily pass: at the scheduled local hour, or immediately on a
+            # ---- fresh start when today's work has not been done yet
+            due = [a for a in accounts if due_for_daily(a["label"], now_utc)]
+            at_scheduled_hour = (now_local.hour == args.daily_at
+                                 and now_local.minute < 30)
+            first_ever = not load_state(accounts[0]["label"]).get("last_run_at")
+            st = {"last_pass": now_utc.isoformat(timespec="seconds"),
+                  "last_result": "refresh"}
+            if due and (at_scheduled_hour or first_ever):
+                # Do not start on the hour boundary itself: a check-in timestamped
+                # exactly 09:00:00 across several accounts is the loudest pattern
+                # available. Shift the whole pass by a few minutes first.
+                shift = random.uniform(0, 240) if not first_ever else 0
+                if shift > 1:
                     log(f"menunggu {shift:.0f}s sebelum mulai pass harian")
                     time.sleep(shift)
+                results, deltas = daily_pass(due)
+                st["last_result"] = (", ".join(
+                    f"{k}: {'ok' if v == 'ok' or isinstance(v, dict) else v}"
+                    for k, v in results.items())) or "ok"
+                if deltas:
+                    last_action = "perubahan: " + "  ".join(
+                        f"{k} {v}" for k, v in deltas.items())
+
+            rows = [snapshot(a["label"], a, mask_email=MASK_EMAIL) for a in accounts]
+
+            # next thing to wait for: the scheduled daily hour, or the refresh tick
+            mins_to_daily = minutes_until_next_local_hour(args.daily_at, now_local)
+            next_at = now_utc + timedelta(
+                minutes=min(mins_to_daily, int(REFRESH_HOURS * 60)))
+            print(render(rows, st, next_at, last_action), flush=True)
+
+            if args.once:
+                return 0
+            # idle: keep the panel live, and fire the daily pass the moment the
+            # scheduled hour arrives (checked every 30s, so no missed window)
+            while True:
+                try:
+                    time.sleep(30)
+                except KeyboardInterrupt:
+                    print("\n[stopped]", flush=True)
+                    return 0
+                now_local = local_now()
+                if (now_local.hour == args.daily_at and now_local.minute < 30):
                     due = [a for a in accounts
-                           if due_for_daily(a["label"],
-                                            datetime.now(timezone.utc))]
-                    results, deltas = daily_pass(due)
-                    if deltas:
-                        last_action = "perubahan: " + "  ".join(
-                            f"{k} {v}" for k, v in deltas.items())
-                    break                      # redraw with fresh numbers
-            if datetime.now(timezone.utc) >= next_at:
-                break
+                           if due_for_daily(a["label"], datetime.now(timezone.utc))]
+                    if due:
+                        # same reasoning as the first iteration: never fire on the
+                        # boundary, and stagger accounts apart
+                        shift = random.uniform(0, 240)
+                        log(f"menunggu {shift:.0f}s sebelum mulai pass harian")
+                        time.sleep(shift)
+                        due = [a for a in accounts
+                               if due_for_daily(a["label"],
+                                                datetime.now(timezone.utc))]
+                        results, deltas = daily_pass(due)
+                        if deltas:
+                            last_action = "perubahan: " + "  ".join(
+                                f"{k} {v}" for k, v in deltas.items())
+                        break                  # redraw with fresh numbers
+                if datetime.now(timezone.utc) >= next_at:
+                    break
+        except KeyboardInterrupt:
+            print("\n[stopped]", flush=True)
+            return 0
+        except Exception as ex:            # noqa: BLE001
+            # A standby daemon must not die on one bad cycle: log it, keep the
+            # panel, and retry after the refresh interval.
+            log(f"cycle error: {type(ex).__name__}: {ex}")
+            time.sleep(60)
 
 
 if __name__ == "__main__":
