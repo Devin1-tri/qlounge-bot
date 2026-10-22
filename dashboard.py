@@ -50,11 +50,18 @@ REFRESH_HOURS = 4          # light pass cadence
 MASK_EMAIL = False      # show ri***@gmail.com instead of the full address
 LOCAL_TZ_OFFSET = timedelta(hours=8)   # CST (UTC+8), the operator's clock
 
-# column plan for a wide terminal: name | poin | level | streak | today | posts | next
-WIDE_COLS = [("akun", 14), ("username", 16), ("poin", 7), ("level", 13),
-             ("streak", 7), ("hari ini", 10), ("post", 5), ("next", 9)]
+# column plan for a wide terminal:
+#   akun | username | poin | level | streak | hari ini | checkin | post | email | next
+# The three task columns are ticked from the daily pass: the chores it ran are
+# checked, the ones it could not finish stay open. That replaces the old
+# free-text "belum: ..." / "sudah beres, reward belum diklaim" lines, which said
+# the same thing in words and were ambiguous to read.
+WIDE_COLS = [("akun", 12), ("username", 15), ("poin", 6), ("level", 12),
+             ("streak", 6), ("hari ini", 8), ("checkin", 8), ("post", 6),
+             ("email", 7), ("next", 8)]
 # phone fallback: keep the account and what it owes, drop the rest
-NARROW_COLS = [("akun", 12), ("username", 14), ("poin", 7), ("next", 9)]
+NARROW_COLS = [("akun", 10), ("poin", 6), ("checkin", 8), ("post", 6),
+               ("email", 7), ("next", 8)]
 
 
 def plan_cols():
@@ -90,6 +97,32 @@ def c(text, *styles):
 
 
 
+def task_checks(label, row):
+    """Tiga kolom tugas harian: checkin / post / email verify reward.
+
+    Tick hanya kalau bot benar-benar sudah beres tugas itu:
+      * checkin  -> akun sudah check-in hari ini (attendance.checkedIn)
+      * post     -> tidak ada post baru yang belum dibaca
+      * email    -> email terverifikasi DAN reward verify_email sudah completed
+
+    Hasil pass harian disimpan di state (task_checks) dan menang atas cek API,
+    karena API bisa bilang "selesai" untuk satu hari sementara pass-nya gagal.
+    """
+    last = load_state(label).get("task_checks") or {}
+    if isinstance(last, dict) and any(last.values()):
+        return {k: bool(last.get(k)) for k in ("checkin", "post", "email")}
+    return {
+        "checkin": bool(row.get("checked_in")),
+        "post": row.get("posts_unread") == 0,
+        "email": bool(row.get("email_verified")) and bool(row.get("email_reward_claimed")),
+    }
+
+
+def tick(ok):
+    """Ceklis kolom tugas: [+]/[-] ASCII-only supaya lebar kolom nggak meleset."""
+    return c("[+]", ui.C.G, ui.C.BOLD) if ok else c("[-]", ui.C.DIM)
+
+
 # -------------------------------------------------------------------- render --
 
 def _cells(text):
@@ -103,6 +136,12 @@ def _cells(text):
     # ✅ / ⏳ / … arrive via variation selectors; treat pairs as 2 cells
     n += text.count("️")
     return n
+
+
+def _strip(text):
+    """Drop ANSI escape sequences so width math sees the visible text only."""
+    import re
+    return re.sub(r"\033\[[0-9;]*m", "", text)
 
 
 def _fit_line(text, limit):
@@ -154,6 +193,8 @@ def render(rows, st, next_at, action_msg=""):
             txt = str(cells[i]) if i < len(cells) else ""
             if header:
                 parts.append(c(f"{txt:<{w}}"[:w], ui.C.BOLD, ui.C.C))
+            elif "\033[" in txt:            # already painted (tick cell)
+                parts.append(txt + " " * max(0, w - _cells(_strip(txt))))
             else:
                 parts.append(f"{txt:<{w}}"[:w])
             if i < len(COLS) - 1:
@@ -194,15 +235,18 @@ def render(rows, st, next_at, action_msg=""):
         need = r.get("next_xp")
         if xp is not None and need:
             lvl = f"{lvl} {xp}/{need}"
+        chk = task_checks(r["label"], r)
         return {
-            "akun": r["label"][:14],
-            "username": (r.get("nickname") or "-")[:16],
+            "akun": r["label"][:12],
+            "username": (r.get("nickname") or "-")[:15],
             "poin": ui.fmt_pts(r["points"]),
-            "level": lvl[:13],
+            "level": lvl[:12],
             "streak": str(r.get("streak", 0)),
             "hari ini": ui.fmt_pts(r.get("today", "0")),
-            "post": str(r.get("posts_unread", 0)),
-            "next": nxt_txt[:9],
+            "checkin": tick(chk["checkin"]),
+            "post": tick(chk["post"]),
+            "email": tick(chk["email"]),
+            "next": nxt_txt[:8],
         }
 
     for r in rows:
@@ -246,42 +290,21 @@ def render(rows, st, next_at, action_msg=""):
     lines.append(panel_line(" Ctrl+C = stop", (ui.C.DIM,)))
     lines.append(c(hrule("└", "─", "┘"), ui.C.C))
 
-    # detail block under the table: only the pending daily work, one line each
+    # detail block under the table: identity + XP + the two chores whose reward
+    # the app leaves unclaimed by design (they are not to-dos, so they are not
+    # in the task columns and must not be spelled out as pending work either)
     detail = []
     for r in rows:
         if not r.get("ok"):
             continue
-        cl = r.get("checklist") or []
-        # "verified" means the chore is satisfied but its reward is unclaimed -
-        # it is not a to-do, and it must not be listed as one.
-        pend = [i for i in cl if i.get("state", "pending") == "pending"]
-        verified = [i for i in cl if i.get("state") == "verified"]
-        label = f"{r['label']:<16}"
-        if pend:
-            names = "  ".join(f"{i['code'].replace('_', ' ')} "
-                              f"{ui.fmt_pts(i['pts'] or 0)}" for i in pend[:4])
-            more = f"  +{len(pend) - 4}" if len(pend) > 4 else ""
-            detail.append(c(f"  {label}", ui.C.BOLD, ui.C.W)
-                          + c("belum: ", ui.C.DIM) + c(names, ui.C.Y)
-                          + (c(more, ui.C.DIM) if more else ""))
-        else:
-            detail.append(c(f"  {label}", ui.C.BOLD, ui.C.W)
-                          + c("semua tugas harian selesai", ui.C.G))
-        if verified:
-            names = "  ".join(f"{i['code'].replace('_', ' ')} "
-                              f"{ui.fmt_pts(i['pts'] or 0)}" for i in verified)
-            detail.append(c(" " * 18, ui.C.DIM)
-                          + c("sudah beres, reward belum diklaim: ", ui.C.DIM)
-                          + c(names, ui.C.M))
-        em = (f"{r.get('email', '?')}  ·  {r.get('uid', '?')}  ·  "
-              f"tersedia {ui.fmt_pts(r.get('avail', 0))} / "
-              f"terkunci {ui.fmt_pts(r.get('locked', 0))}  ·  "
-              f"undangan {r.get('joined', 0)}")
-        detail.append(c(" " * 18, ui.C.DIM) + c(em, ui.C.DIM))
+        detail.append(c(f"  {r['label']:<12} ", ui.C.BOLD, ui.C.W)
+                      + c(f"{r.get('email', '?')}  ·  {r.get('uid', '?')}  ·  "
+                          f"tersedia {ui.fmt_pts(r.get('avail', 0))} / "
+                          f"terkunci {ui.fmt_pts(r.get('locked', 0))}  ·  "
+                          f"undangan {r.get('joined', 0)}", ui.C.DIM))
         # XP progress. Keep both numbers even when xp > nextLevelXp: the API
         # exposes nextLevelXp but no level-up mechanism exists yet (probed 9
-        # candidate endpoints, all 404), so the threshold is informational. If
-        # the feature ships later this line becomes accurate with no change.
+        # candidate endpoints, all 404), so the threshold is informational.
         xp, need = r.get("xp"), r.get("next_xp")
         if xp is not None and need:
             nxt_name = r.get("next_level_name") or "?"
@@ -290,13 +313,9 @@ def render(rows, st, next_at, action_msg=""):
                 frac = float(xp) / float(need or 1)
             except Exception:
                 pass
-            if frac >= 1.0:
-                # threshold reached but level unchanged - say so plainly rather
-                # than promising a level-up that never happens
-                state = c(f"target {nxt_name} tercapai", ui.C.Y)
-            else:
-                state = c(f"menuju {nxt_name}", ui.C.M)
-            detail.append(c(" " * 18, ui.C.DIM)
+            state = (c(f"target {nxt_name} tercapai", ui.C.Y) if frac >= 1.0
+                     else c(f"menuju {nxt_name}", ui.C.M))
+            detail.append(c(" " * 15, ui.C.DIM)
                           + c("XP ", ui.C.DIM)
                           + c(f"{xp}/{need}", ui.C.W)
                           + c(" " + ui.bar(frac, 14, ui.C.M) + " ", ui.C.DIM)
@@ -371,6 +390,7 @@ def snapshot(label, account, mask_email=False):
             return "pending"
 
         row["email_verified"] = verified
+        row["email_reward_claimed"] = "verify_email" in claimed
         row["checklist"] = [{
             "code": i["code"],
             "pts": i.get("pointAmount"),
@@ -402,6 +422,38 @@ def snapshot(label, account, mask_email=False):
 
 
 # --------------------------------------------------------------------- passes --
+
+def after_pass_checks(token, result):
+    """Re-read the account right after a pass and decide the three ticks.
+
+    Read fresh instead of trusting the action return values: a chore counts as
+    done only when the server agrees (check-in recorded, no unread post left,
+    email verified). `result` is still passed so a hard failure on an action
+    can never show as a tick.
+    """
+    chk = {"checkin": False, "post": False, "email": False}
+
+    code, att = api("/attendance/today", token=token)
+    if code == 200:
+        chk["checkin"] = bool(att.get("checkedIn"))
+    if result and not (result.get("check_in") or (False,))[0]:
+        chk["checkin"] = False
+
+    code, posts = api("/community/posts", token=token)
+    if code == 200:
+        chk["post"] = not any(not p.get("read") for p in posts.get("items", []))
+    if result and not (result.get("posts") or (False,))[0]:
+        chk["post"] = False
+
+    code, me = api("/auth/me", token=token)
+    verified = code == 200 and bool(me.get("emailVerified"))
+    code, earn = api("/rewards/earn-items", token=token)
+    claimed = (isinstance(earn, list) and
+               any(i.get("code") == "verify_email" and i.get("completed")
+                   for i in earn))
+    chk["email"] = bool(verified and claimed)
+    return chk
+
 
 def daily_pass(accounts, rows_before=None):
     """Do the actual daily actions. Returns (results, deltas).
@@ -443,7 +495,8 @@ def daily_pass(accounts, rows_before=None):
             results[label]["posts"] = (ok3, msg3)
             save_state(label, last_run_at=datetime.now(timezone.utc).isoformat(),
                        last_result={"check_in": ok, "notices": ok2, "posts": ok3})
-            # points delta for the footer
+            # points delta for the footer. Balance is saved first: save_state
+            # does a full dict write, so a later call would drop task_checks.
             code, me = api("/auth/me", token=token)
             if code == 200:
                 bal = me["point"]["balance"]
@@ -456,6 +509,7 @@ def daily_pass(accounts, rows_before=None):
                     except Exception:
                         pass
                 save_state(label, last_balance=bal)
+            save_state(label, task_checks=after_pass_checks(token, results[label]))
         except Exception as ex:            # noqa: BLE001
             results[label] = f"ERROR {type(ex).__name__}: {ex}"
     return results, deltas
@@ -501,6 +555,16 @@ def main():
 
     refresh_hours = args.refresh_hours
     globals()["REFRESH_HOURS"] = refresh_hours
+
+    # refresh the three task ticks at startup, so a restarted panel never shows
+    # values left over from yesterday's state file
+    for acc in accounts:
+        token = ensure_token(acc)
+        if token:
+            try:
+                save_state(acc["label"], task_checks=after_pass_checks(token, None))
+            except Exception as ex:      # noqa: BLE001
+                log(f"task_checks {acc['label']} gagal: {type(ex).__name__}: {ex}")
 
     last_action = ""
     while True:
