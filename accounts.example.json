@@ -1,26 +1,31 @@
 {
   "accounts": [
     {
-      "label": "NAMA_AKUN",
-      "email": "email@gmail.com",
-      "password": "PASSWORD_AKUN",
-      "invite_code_used": "12_DIGIT_KODE_INVITE",
-      "max_posts_per_run": 4,
-      "pacing": {
-        "check_in": [1.2, 4.5],
-        "post_read": [3.0, 14.0],
-        "notice_read": [0.6, 2.0],
-        "account_gap": [45.0, 150.0]
-      },
-      "active_hours": [7, 23]
+      "label": "akun1",
+      "email": "email1@gmail.com",
+      "password": "PASSWORD_AKUN_1"
+    },
+    {
+      "label": "akun2",
+      "email": "email2@gmail.com",
+      "password": "PASSWORD_AKUN_2"
     }
   ],
+  "defaults": {
+    "max_posts_per_run": 4,
+    "account_gap": [45, 150],
+    "check_in": [1.2, 4.5],
+    "post_read": [3, 14],
+    "notice_read": [0.6, 2]
+  },
   "_comments": {
-    "label": "nama pendek untuk file state/<label>.json",
-    "max_posts_per_run": "batasi post yang dibaca per run; null = semua yang belum dibaca",
-    "pacing": "rentang jeda (detik, min-max) antar aksi. Jangan di-set 0.",
-    "account_gap": "jeda sebelum pindah ke akun berikutnya",
-    "active_hours": "jam lokal server saat bot boleh jalan; [0,24] = selalu",
-    "refreshToken": "opsional. Kalau kosong, bot login pakai email+password."
+    "label": "nama pendek untuk state/<label>.json - harus unik",
+    "email": "email akun",
+    "password": "password akun",
+    "defaults": "dipakai kalau akun nggak punya setelan sendiri",
+    "account_gap": "jeda (detik, min-max) sebelum akun ini mulai - biar nggak barengan",
+    "max_posts_per_run": "berapa post dibaca per run; 0 = skip",
+    "check_in/post_read/notice_read": "jeda acak antar aksi (detik)",
+    "_opsional": "Kalau mau akun tertentu beda, tambahkan field yang sama di dalam objek akun itu - nilainya menimpa defaults"
   }
 }

@@ -93,10 +93,32 @@ def save_state(label, **kw):
 # ------------------------------------------------------------ accounts ----
 
 def load_accounts():
+    """Accounts with `defaults` merged in, so an account only needs 3 fields.
+
+    Layout:
+      {"accounts": [{"label","email","password"}, ...],
+       "defaults": {"max_posts_per_run":4, "account_gap":[45,150], ...}}
+
+    Any key set on an account overrides the same key in defaults. This keeps
+    adding an account to a 3-line edit instead of a 30-line one.
+    """
     p = HERE / "accounts.json"
     if not p.exists():
         return []
-    return json.loads(p.read_text()).get("accounts", [])
+    cfg = json.loads(p.read_text())
+    defaults = cfg.get("defaults", {}) or {}
+    out = []
+    for acc in cfg.get("accounts", []) or []:
+        merged = dict(defaults)
+        merged.update({k: v for k, v in acc.items() if not k.startswith("_")})
+        # pacing values may be given flat ("post_read": [3,14]) or nested
+        flat = {k: v for k, v in merged.items()
+                if k in ("check_in", "post_read", "notice_read", "account_gap")}
+        pacing = dict(merged.get("pacing") or {})
+        pacing.update(flat)
+        merged["pacing"] = pacing
+        out.append(merged)
+    return out
 
 
 def ensure_token(account):
@@ -361,7 +383,8 @@ def main():
             gained_total += after - before
         # humans do not clear every section the instant the previous one ends
         if i < len(accounts) - 1:
-            gap = random.uniform(*acc.get("account_gap", (45, 120)))
+            gap = random.uniform(*acc.get("pacing", {}).get(
+                "account_gap", (45, 150)))
             log(f"  jeda {gap:.0f}s sebelum akun berikutnya")
             if dash:
                 dash.annotate(acc["label"], f" · jeda {gap:.0f}s")

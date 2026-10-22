@@ -382,7 +382,8 @@ def daily_pass(accounts, rows_before=None):
         st["label"] = label
 
         if i > 0:
-            gap = random.uniform(*acc.get("account_gap", (45, 150)))
+            gap = random.uniform(*acc.get("pacing", {}).get(
+                "account_gap", (45, 150)))
             log(f"jeda {gap:.0f}s sebelum akun {label}")
             time.sleep(gap)
 

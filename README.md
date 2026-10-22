@@ -76,15 +76,32 @@ python3 qlounge.py run --no-guard            # paksa jalan walau sudah jalan har
 
 ## Multi akun
 
-Tambah entri di `accounts.json`:
+Tiap akun cuma butuh **3 baris**. Setelan yang sama untuk semua akun ditaruh
+sekali di `defaults`:
 
 ```json
 {
   "accounts": [
-    { "label": "akun1", "email": "a1@gmail.com", "password": "...", "max_posts_per_run": 4 },
-    { "label": "akun2", "email": "a2@gmail.com", "password": "...", "max_posts_per_run": 3 }
-  ]
+    { "label": "akun1", "email": "a1@gmail.com", "password": "..." },
+    { "label": "akun2", "email": "a2@gmail.com", "password": "..." }
+  ],
+  "defaults": {
+    "max_posts_per_run": 4,
+    "account_gap": [45, 150],
+    "check_in": [1.2, 4.5],
+    "post_read": [3, 14],
+    "notice_read": [0.6, 2]
+  }
 }
+```
+
+`load_accounts()` menggabungkan `defaults` ke setiap akun, jadi nambah akun =
+tambah 3 baris. Kalau satu akun butuh setelan beda, taruh field itu di dalam
+objek akunnya — nilainya menimpa `defaults`:
+
+```json
+{ "label": "akun2", "email": "a2@gmail.com", "password": "...",
+  "account_gap": [300, 600], "max_posts_per_run": 1 }
 ```
 
 Bot menyusul berurutan, dengan jeda acak antarakun (`account_gap`) sebelum
