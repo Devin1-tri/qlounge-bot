@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import time
+import random
 import shutil
 import unicodedata
 from datetime import datetime, timedelta, timezone
@@ -365,13 +366,26 @@ def snapshot(label, account, mask_email=False):
 
 # --------------------------------------------------------------------- passes --
 
-def daily_pass(accounts, rows_before):
-    """Do the actual daily actions. Returns (results, deltas)."""
+def daily_pass(accounts, rows_before=None):
+    """Do the actual daily actions. Returns (results, deltas).
+
+    Accounts are NOT run back to back. Every account except the first is delayed
+    by its own random `account_gap` (default 45-150s) before its first request,
+    so N accounts never produce an identical burst of check-ins at 09:00:00.
+    That burst - same minute, same endpoints, different tokens - is the cheapest
+    multi-account signal there is.
+    """
     results, deltas = {}, {}
-    for acc in accounts:
+    for i, acc in enumerate(accounts):
         label = acc["label"]
         st = load_state(label)
         st["label"] = label
+
+        if i > 0:
+            gap = random.uniform(*acc.get("account_gap", (45, 150)))
+            log(f"jeda {gap:.0f}s sebelum akun {label}")
+            time.sleep(gap)
+
         token = ensure_token(acc)
         if not token:
             results[label] = "login gagal"
@@ -464,7 +478,14 @@ def main():
         st = {"last_pass": now_utc.isoformat(timespec="seconds"),
               "last_result": "refresh"}
         if due and (at_scheduled_hour or first_ever):
-            results, deltas = daily_pass(due, rows=[])
+            # Do not start on the hour boundary itself: a check-in timestamped
+            # exactly 09:00:00 across several accounts is the loudest pattern
+            # available. Shift the whole pass by a few minutes first.
+            shift = random.uniform(0, 240) if not first_ever else 0
+            if shift > 1:
+                log(f"menunggu {shift:.0f}s sebelum mulai pass harian")
+                time.sleep(shift)
+            results, deltas = daily_pass(due)
             st["last_result"] = (", ".join(
                 f"{k}: {'ok' if v == 'ok' or isinstance(v, dict) else v}"
                 for k, v in results.items())) or "ok"
@@ -495,7 +516,15 @@ def main():
                 due = [a for a in accounts
                        if due_for_daily(a["label"], datetime.now(timezone.utc))]
                 if due:
-                    results, deltas = daily_pass(due, rows=[])
+                    # same reasoning as the first iteration: never fire on the
+                    # boundary, and stagger accounts apart
+                    shift = random.uniform(0, 240)
+                    log(f"menunggu {shift:.0f}s sebelum mulai pass harian")
+                    time.sleep(shift)
+                    due = [a for a in accounts
+                           if due_for_daily(a["label"],
+                                            datetime.now(timezone.utc))]
+                    results, deltas = daily_pass(due)
                     if deltas:
                         last_action = "perubahan: " + "  ".join(
                             f"{k} {v}" for k, v in deltas.items())
