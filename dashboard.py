@@ -51,10 +51,10 @@ MASK_EMAIL = False      # show ri***@gmail.com instead of the full address
 LOCAL_TZ_OFFSET = timedelta(hours=8)   # CST (UTC+8), the operator's clock
 
 # column plan for a wide terminal: name | poin | level | streak | today | posts | next
-WIDE_COLS = [("akun", 16), ("poin", 7), ("level", 9), ("streak", 7),
-             ("hari ini", 10), ("post", 5), ("next", 9)]
+WIDE_COLS = [("akun", 14), ("username", 16), ("poin", 7), ("level", 13),
+             ("streak", 7), ("hari ini", 10), ("post", 5), ("next", 9)]
 # phone fallback: keep the account and what it owes, drop the rest
-NARROW_COLS = [("akun", 14), ("poin", 7), ("hari ini", 8), ("next", 9)]
+NARROW_COLS = [("akun", 12), ("username", 14), ("poin", 7), ("next", 9)]
 
 
 def plan_cols():
@@ -188,10 +188,17 @@ def render(rows, st, next_at, action_msg=""):
     # every column name maps to the value it shows, so a trimmed column set
     # (phone) still gets the right cell instead of a fixed 7-slot list
     def account_cells(r, nxt_txt):
+        # level shows "Lv.N NAME" plus XP progress when the API gives both ends
+        lvl = r.get("level", "?").replace("Lv.", "")
+        xp = r.get("xp")
+        need = r.get("next_xp")
+        if xp is not None and need:
+            lvl = f"{lvl} {xp}/{need}"
         return {
-            "akun": r["label"][:16],
+            "akun": r["label"][:14],
+            "username": (r.get("nickname") or "-")[:16],
             "poin": ui.fmt_pts(r["points"]),
-            "level": r.get("level", "?").replace("Lv.", "")[:9],
+            "level": lvl[:13],
             "streak": str(r.get("streak", 0)),
             "hari ini": ui.fmt_pts(r.get("today", "0")),
             "post": str(r.get("posts_unread", 0)),
@@ -271,6 +278,26 @@ def render(rows, st, next_at, action_msg=""):
               f"terkunci {ui.fmt_pts(r.get('locked', 0))}  ·  "
               f"undangan {r.get('joined', 0)}")
         detail.append(c(" " * 18, ui.C.DIM) + c(em, ui.C.DIM))
+        # XP progress toward the next level (the table column only fits x/y).
+        # xp is cumulative while nextLevelXp is the threshold for the next
+        # level, so xp > nextLevelXp happens and is NOT a bug - it means the
+        # level-up condition is something else (or not yet processed). Show the
+        # numbers as they are and let the bar clamp.
+        xp, need = r.get("xp"), r.get("next_xp")
+        if xp is not None and need:
+            nxt_name = r.get("next_level_name") or "?"
+            frac = 0.0
+            try:
+                frac = float(xp) / float(need or 1)
+            except Exception:
+                pass
+            state = (c("siap naik", ui.C.G) if frac >= 1.0
+                     else c(f"naik {nxt_name}", ui.C.M))
+            detail.append(c(" " * 18, ui.C.DIM)
+                          + c("XP ", ui.C.DIM)
+                          + c(f"{xp}/{need}", ui.C.W)
+                          + c(" " + ui.bar(frac, 14, ui.C.M) + " ", ui.C.DIM)
+                          + state)
     if detail:
         lines.append("")
         for ln in detail:
@@ -301,9 +328,11 @@ def snapshot(label, account, mask_email=False):
     row["ok"] = True
     row["uid"] = me.get("membership", {}).get("uid", "?")
     mem = me.get("membership", {})
+    row["nickname"] = me.get("nickname") or "-"
     row["level"] = f"Lv.{mem.get('level', '?')} {str(mem.get('levelName', '?')).upper()}"
     row["xp"] = mem.get("xp", 0)
     row["next_xp"] = mem.get("nextLevelXp")
+    row["next_level_name"] = mem.get("nextLevelName")
     pt = me.get("point", {})
     row["points"] = pt.get("balance", "0")
     row["avail"] = pt.get("available", "0")
