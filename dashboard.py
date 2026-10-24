@@ -46,6 +46,11 @@ class AlreadyRunning(RuntimeError):
     pass
 
 
+# Holds the lock file object for the life of the process. A local variable in
+# main() would be collected immediately and release the flock.
+LOCK_HANDLE = []
+
+
 def acquire_lock():
     """Take an exclusive process lock, or exit loudly.
 
@@ -625,7 +630,11 @@ def main():
     # happens, so the check is unconditional and the message says why.
     if not args.no_lock:
         try:
-            acquire_lock()
+            # Keep the handle for the whole process lifetime: flock is released
+            # as soon as the file object is closed OR garbage-collected, so a
+            # local variable here would free the lock immediately and every
+            # later instance would be allowed to start.
+            LOCK_HANDLE.append(acquire_lock())
         except AlreadyRunning as ex:
             print(f"[!] {ex}", flush=True)
             return 1
