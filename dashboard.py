@@ -19,6 +19,7 @@ Usage:
     python3 dashboard.py --daily-at 8   # local hour for the daily pass
 """
 import argparse
+import fcntl
 import json
 import os
 import sys
@@ -36,6 +37,39 @@ import ui  # noqa: E402
 from qlounge import (api, load_accounts, load_state, save_state, ensure_token,  # noqa: E402
                      action_check_in, action_notices, action_posts, status, log)
 from anti_detection import Pacing, ANSWER_BANK, DailyBudget  # noqa: E402
+
+# --------------------------------------------------------------- single lock --
+LOCK_PATH = HERE / "state" / "dashboard.lock"
+
+
+class AlreadyRunning(RuntimeError):
+    pass
+
+
+def acquire_lock():
+    """Take an exclusive process lock, or exit loudly.
+
+    WHY: the API rotates the refresh token on every /auth/refresh and rejects
+    reuse of the old one with 401 AUTH_REFRESH_TOKEN_REUSED. Two live processes
+    therefore fight over one account: the first rotates the token, the second
+    presents the now-dead token, gets 401, and burns a full re-login. Nothing
+    used to stop a stale screen session and a freshly started one from both
+    running. fcntl.flock is released automatically if the process dies, so a
+    crashed run never leaves the lock stuck.
+    """
+    try:
+        LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(LOCK_PATH, "w")
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fh.write(f"{os.getpid()}\n")
+        fh.flush()
+        return fh                      # keep the handle alive for the process
+    except OSError:
+        raise AlreadyRunning(
+            f"dashboard sudah jalan (lock: {LOCK_PATH}). "
+            "Hentikan yang lama dulu - dua proses berebut refresh token "
+            "dan akun bisa kena 401 AUTH_REFRESH_TOKEN_REUSED.")
+
 
 def term_width():
     """Actual terminal width, no floor - a phone terminal really is ~40 cols."""
@@ -525,7 +559,14 @@ def daily_pass(accounts, rows_before=None):
                 save_state(label, last_balance=bal)
             save_state(label, task_checks=after_pass_checks(token, results[label]))
         except Exception as ex:            # noqa: BLE001
-            results[label] = f"ERROR {type(ex).__name__}: {ex}"
+            # An exception here means the account did NOT complete, so
+            # last_run_at is deliberately left alone and it stays "due" for the
+            # next cycle. Log it loudly: storing it only in the results dict is
+            # what let the ANSWER_BANK NameError run for two days with a green
+            # panel and zero activity.
+            msg = f"ERROR {type(ex).__name__}: {ex}"
+            results[label] = msg
+            log(f"  [!] {label}: {msg}")
     return results, deltas
 
 
@@ -544,6 +585,19 @@ def due_for_daily(label, now_utc=None):
         return True
 
 
+def daily_window_open(now_local, daily_at):
+    """Is the daily pass allowed to run at this wall-clock time?
+
+    The window is NOT "the hour of daily_at" any more. That made the daemon
+    idle for the other ~23.5 hours: an account whose cooldown expired at 10:00
+    would sit untouched until 09:00 the next day, which is exactly the
+    "no activity at all" symptom. A day is now "done" once the pass has run,
+    and it runs as soon as it is due - the anti-burst jitter inside
+    daily_pass() is what keeps it from looking like a machine, not a clock.
+    """
+    return True
+
+
 def minutes_until_next_local_hour(hour, now_local=None):
     """Minutes from now until the next occurrence of a local wall-clock hour."""
     now_local = now_local or local_now()
@@ -559,9 +613,23 @@ def main():
     ap.add_argument("--daily-at", type=int, default=9,
                     help="jam lokal untuk pass harian (default 9)")
     ap.add_argument("--refresh-hours", type=float, default=REFRESH_HOURS)
+    ap.add_argument("--no-lock", action="store_true",
+                    help="lewati lock proses (hanya untuk debug)")
     args = ap.parse_args()
 
     ui.C.reset()
+
+    # Refuse to run twice. Two live processes race on the rotating refresh token
+    # and the loser gets 401 AUTH_REFRESH_TOKEN_REUSED, which costs a full
+    # re-login. A stale screen session plus a fresh start is exactly how that
+    # happens, so the check is unconditional and the message says why.
+    if not args.no_lock:
+        try:
+            acquire_lock()
+        except AlreadyRunning as ex:
+            print(f"[!] {ex}", flush=True)
+            return 1
+
     accounts = load_accounts()
     if not accounts:
         print("accounts.json kosong — salin accounts.example.json")
@@ -591,12 +659,10 @@ def main():
             # ---- With --once the pass always runs for whatever is due, so a
             # ---- one-shot invocation is not just a status render.
             due = [a for a in accounts if due_for_daily(a["label"], now_utc)]
-            at_scheduled_hour = (now_local.hour == args.daily_at
-                                 and now_local.minute < 30)
             first_ever = not load_state(accounts[0]["label"]).get("last_run_at")
             st = {"last_pass": now_utc.isoformat(timespec="seconds"),
                   "last_result": "refresh"}
-            if due and (at_scheduled_hour or first_ever or args.once):
+            if due and daily_window_open(now_local, args.daily_at):
                 # Do not start on the hour boundary itself: a check-in timestamped
                 # exactly 09:00:00 across several accounts is the loudest pattern
                 # available. Shift the whole pass by a few minutes first.
@@ -631,23 +697,25 @@ def main():
                     print("\n[stopped]", flush=True)
                     return 0
                 now_local = local_now()
-                if (now_local.hour == args.daily_at and now_local.minute < 30):
+                now_utc = datetime.now(timezone.utc)
+                # A day is "done" when the pass has run, not when the clock
+                # says 09:xx. Poll for due accounts so a cooldown that expires
+                # at any hour gets picked up within 30s instead of waiting for
+                # the next 09:00 window.
+                if any(due_for_daily(a["label"], now_utc) for a in accounts):
                     due = [a for a in accounts
-                           if due_for_daily(a["label"], datetime.now(timezone.utc))]
-                    if due:
-                        # same reasoning as the first iteration: never fire on the
-                        # boundary, and stagger accounts apart
-                        shift = random.uniform(0, 240)
-                        log(f"menunggu {shift:.0f}s sebelum mulai pass harian")
-                        time.sleep(shift)
-                        due = [a for a in accounts
-                               if due_for_daily(a["label"],
-                                                datetime.now(timezone.utc))]
-                        results, deltas = daily_pass(due)
-                        if deltas:
-                            last_action = "perubahan: " + "  ".join(
-                                f"{k} {v}" for k, v in deltas.items())
-                        break                  # redraw with fresh numbers
+                           if due_for_daily(a["label"], now_utc)]
+                    shift = random.uniform(0, 240)
+                    log(f"menunggu {shift:.0f}s sebelum mulai pass harian")
+                    time.sleep(shift)
+                    due = [a for a in accounts
+                           if due_for_daily(a["label"],
+                                            datetime.now(timezone.utc))]
+                    results, deltas = daily_pass(due)
+                    if deltas:
+                        last_action = "perubahan: " + "  ".join(
+                            f"{k} {v}" for k, v in deltas.items())
+                    break                  # redraw with fresh numbers
                 if datetime.now(timezone.utc) >= next_at:
                     break
         except KeyboardInterrupt:

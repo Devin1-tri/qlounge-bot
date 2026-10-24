@@ -34,6 +34,13 @@ UA = ("Mozilla/5.0 (Linux; Android 12; SM-S906N Build/SP1A.210812.016; wv) "
       "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 "
       "Chrome/141.0.7390.0 Mobile Safari/537.36")
 
+# Module-level import (2026-10-24): these were previously imported only inside
+# the `if __name__ == "__main__":` block, so dashboard.py - which imports this
+# file as a module - never got them and action_check_in() died with a NameError
+# that dashboard's broad try/except swallowed into an unread results dict.
+sys.path.insert(0, str(HERE))
+from anti_detection import Pacing, ANSWER_BANK, DailyBudget, in_active_hours  # noqa: E402
+
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
